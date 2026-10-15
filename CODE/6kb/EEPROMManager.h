@@ -45,12 +45,14 @@ uint8_t keyMapGetFromEEPROM(uint8_t key, uint8_t slot, uint8_t *offset){
 //不用再逐条补发空槽（NO_DEVICE 就是 0，用宏写更清楚）。
 //注意：只要传进来的 slot < MAXIMUM_BINDABLE_KEY 就不会越界；
 //改 BUTTONCOUNT / MAXIMUM_BINDABLE_KEY 时请自行核对映射区总大小（见 Universal.h）
-void keyMapClearFromEEPROM(uint8_t key, uint8_t slot){
+void keyMapClearInEEPROM(uint8_t key, uint8_t slot){
   if(!(key < BUTTONCOUNT) || !(slot < MAXIMUM_BINDABLE_KEY)){
     return;
   }
   for(uint8_t s = slot; s < MAXIMUM_BINDABLE_KEY; s++){
-    EEPROM.write(keyMapSlotToEEPROMIndex(key, s), NO_DEVICE);
+    if(EEPROM.read(keyMapSlotToEEPROMIndex(key, s)) != NO_DEVICE){
+      EEPROM.write(keyMapSlotToEEPROMIndex(key, s), NO_DEVICE);
+    }
   }
 }
 
@@ -151,14 +153,14 @@ void keyCodeGetFromEEPROM(uint8_t key){
     keyMapAppend(key, device, offset);
   }
 }
-void keyCodeClear(){
+void keyCodeClearAll(){
   //清每个映射槽的 device
   //device为0后面对应的 offset 不会再被读到
   #if DEBUG
     Serial.print("清空映射\n");
   #endif
-  for(int index = KEYMAP_START_POSITION; index < KEYMAP_START_POSITION + BUTTONCOUNT * KEYMAP_SIZE_PER_KEY; index += 2){
-    EEPROM.write(index, NO_DEVICE);
+  for(uint8_t key = 0; key < BUTTONCOUNT; key++){
+    keyMapClearInEEPROM(key, 0);
   }
 }
 //读取抬起去抖时间：没写过（0 / 0xFF）或者超出范围就保持默认值

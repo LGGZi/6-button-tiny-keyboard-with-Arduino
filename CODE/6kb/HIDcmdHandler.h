@@ -58,12 +58,14 @@ uint8_t pre_cmd[8];
 /*-------------------------------------------------------------
 独立的设备信息报文：结构为 
 [0xFF]、 [BUTTONCOUNT]、 [是否为磁轴0xF0 == y|0x0F == n]、 [编码器数量，0就是没有）]、 [设备类型（保留给后续手台主控使用）]、 
-后三位保留，可能会用于设备Layout识别
+后二位保留、最后一位固件版本号
+版本号格式示例 0 1 | 0 1 1 | 0 0 1  ==  1.31
+前两位小数点前整数、中间三位小数点后一位、最后三位为小数点后第二位
 */
 void HIDDeviceInfoUpload(){
     //编码器数量填 1：硬件上留了编码器（ENC_L_A/B = 2/3），功能目前只是保留
     //设备类型沿用 0x01（保留给后续手台主控使用）
-    uint8_t resp[8] = { 0xFF, BUTTONCOUNT, 0x0F, 0x01, 0x01, 0, 0, 0 };
+    uint8_t resp[8] = { 0xFF, BUTTONCOUNT, 0x0F, 0x01, 0x01, 0, 0, 0x00 };
     HID().SendReport(4, resp, 8);
 }
 
@@ -145,12 +147,9 @@ void HIDcmdResponse(const uint8_t *report_cmd) {
                     uint8_t device = cmd_buf[1];         //Byte2
                     uint8_t key = cmd_buf[2];            //Byte3
                     uint8_t offset = cmd_buf[3];         //Byte4
-                    uint8_t storage_index = cmd_buf[5];   //Byte6：本按键的第几个映射槽
-                    if(storage_index < MAXIMUM_BINDABLE_KEY){
-                        _keyCodeSetToEEPROM(key, storage_index, device, offset);
-                        //写完这一条，把它后面的槽全部设成空槽：
-                        //这样上位机只要按顺序发它有的那几条映射就行，尾部不用再补发空槽
-                        keyMapClearFromEEPROM(key, storage_index + 1);
+                    uint8_t slot = cmd_buf[5];   //Byte6：本按键的第几个映射槽
+                    if(slot < MAXIMUM_BINDABLE_KEY){
+                        _keyCodeSetToEEPROM(key, slot, device, offset);
                     }
                 break;
                 }
@@ -158,7 +157,14 @@ void HIDcmdResponse(const uint8_t *report_cmd) {
                     #if DEBUG
                         Serial.print("收到清空指令\n");
                     #endif
-                    keyCodeClear();
+                    uint8_t key = cmd_buf[2];           //Byte3
+                    uint8_t clear_whom = cmd_buf[5];    //Byte6
+                    if(clear_whom == BUTTONCOUNT){
+                        keyCodeClearAll();
+                    }else if(clear_whom >= 0 && clear_whom < BUTTONCOUNT){
+                        keyMapClearInEEPROM(key, clear_whom);
+                        //写完后用这个指令，把它后面的槽全部设成空槽
+                    }
                     keyCodeInit();
                 break;
                 }
