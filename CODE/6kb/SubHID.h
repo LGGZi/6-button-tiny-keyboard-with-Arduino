@@ -59,6 +59,7 @@ class HIDCon_
 public:
   HIDCon_();
   void setState(HIDConReport_t *report);
+  void HIDCon_::setConsumerState(uint8_t consumer_data);
   // inline uint16_t readState(){ return HIDCon_led; };
 };
 

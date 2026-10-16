@@ -165,14 +165,14 @@ HIDCon_::HIDCon_(void) {
 void HIDCon_::setState(HIDConReport_t *report) {
 
   // Xbox手柄数据 (Report ID 1)
-  uint8_t xboxData[8]; // 2(按钮) + 4(摇杆) + 2(扳机) = 8字节
-  memcpy(xboxData, &report->xboxButtons, 2);    // 16位按钮
-  memcpy(xboxData + 2, &report->lxAxis, 4);     // 4个8位摇杆轴
-  memcpy(xboxData + 6, &report->lt, 2);        // 2个8位扳机
-  HID().SendReport(1, xboxData, sizeof(xboxData));
+  uint8_t xbox_data[8]; // 2(按钮) + 4(摇杆) + 2(扳机) = 8字节
+  memcpy(xbox_data, &report->xboxButtons, 2);    // 16位按钮
+  memcpy(xbox_data + 2, &report->lxAxis, 4);     // 4个8位摇杆轴
+  memcpy(xbox_data + 6, &report->lt, 2);        // 2个8位扳机
+  HID().SendReport(1, xbox_data, sizeof(xbox_data));
 
   // 键盘数据 (Report ID 2)
-  uint8_t keyboardData[14] = {
+  uint8_t keyboard_data[14] = {
     report->keyboardKeys[0],   // 普通键
     report->keyboardKeys[1],   // 普通键
     report->keyboardKeys[2],   // etc
@@ -188,19 +188,28 @@ void HIDCon_::setState(HIDConReport_t *report) {
     report->keyboardKeys[12],
     report->keyboardKeys[13]   // 修饰键（1字节）
   };
-  HID().SendReport(2, keyboardData, sizeof(keyboardData));
+  HID().SendReport(2, keyboard_data, sizeof(keyboard_data));
 
   // 鼠标数据 (Report ID 3)
-  uint8_t mouseData[4] = {
+  uint8_t mouse_data[4] = {
     report->mouseButtons, // 按钮状态（低3位有效）
     report->mouseX,        // X轴
     report->mouseY,        // Y轴
     report->wheel          // 滚轮
   };
-  HID().SendReport(3, mouseData, sizeof(mouseData));
-   // 消费类控制 (Report ID 5) 
-  uint8_t consumerData[1] = { report->mediaButtons & 0x3F };
-  HID().SendReport(5, consumerData, sizeof(consumerData));
+  HID().SendReport(3, mouse_data, sizeof(mouse_data));
+
+}
+void HIDCon_::setConsumerState(uint8_t consumer_data){
+  // 消费类控制 (Report ID 5) 单独逻辑，仅响应变化的按键
+  static uint8_t pre_consumer_data = 0;
+  consumer_data &= 0x3F;
+  if(pre_consumer_data != consumer_data){
+    uint8_t diff = pre_consumer_data ^ consumer_data;
+    uint8_t payload = consumer_data & diff;
+    HID().SendReport(5, &payload, sizeof(payload));
+    pre_consumer_data = consumer_data;
+  }
 }
 
 HIDCon_ HIDCon;

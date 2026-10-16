@@ -1,7 +1,8 @@
 #ifndef Universal_h
 #define Universal_h
-//调试打印开关：打开前记得在 setup() 里放开 Serial.begin(9600)
+//在这里开启或关闭串口DEBUG
 #define DEBUG 0
+#define FIRMWARE_VERSION 0x43
 //编码器灵敏度vv
 //键鼠模式灵敏度vv 值为起转脉冲数
 #define TT_ACTIVE_COUNT 1
@@ -66,11 +67,13 @@ char buff[80];
 //device == NO_DEVICE 表示这个槽是空的，后面也不用看了
 static uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2] = {0};
 /*——————————通用函数——————————*/
+#define HIDStateUpdate(...) _HIDStateUpdate((1, ##__VA_ARGS__))
 void _HIDStateUpdate(uint8_t LoopCount){
   if(step < LoopCount){
     step++;
   }else{
     HIDCon.setState(&report);
+    HIDCon.setConsumerState(report.mediaButtons);
     step = 1;
   }
 }
