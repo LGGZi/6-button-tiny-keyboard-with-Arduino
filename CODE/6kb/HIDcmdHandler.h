@@ -65,7 +65,7 @@ uint8_t pre_cmd[8];
 void HIDDeviceInfoUpload(){
     //编码器数量填 1：硬件上留了编码器（ENC_L_A/B = 2/3），功能目前只是保留
     //设备类型沿用 0x01（保留给后续手台主控使用）
-    uint8_t resp[8] = { 0xFF, BUTTONCOUNT, 0x0F, 0x01, 0x01, 0, 0, 0x00 };
+    uint8_t resp[8] = { 0xFF, BUTTONCOUNT, 0x0F, 0x01, 0x01, 0, 0, FIRMWARE_VERSION };
     HID().SendReport(4, resp, 8);
 }
 
