@@ -2,8 +2,7 @@
 #define KeyManager_h
 
 #include "Universal.h"
-#include "SubHID.h"
-#define HIDStateUpdate(...) _HIDStateUpdate((1, ##__VA_ARGS__))
+
 #define DEVICE 0
 #define KEYOFFSET 1
 //report 这个全局变量在 Universal.h 里声明（和磁轴键盘不同，那边是在这里声明的）

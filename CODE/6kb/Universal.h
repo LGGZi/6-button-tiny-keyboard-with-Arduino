@@ -1,8 +1,8 @@
-#ifndef Universal_h
+﻿#ifndef Universal_h
 #define Universal_h
 //在这里开启或关闭串口DEBUG
 #define DEBUG 0
-#define FIRMWARE_VERSION 0x43
+#define FIRMWARE_VERSION 0x44
 //编码器灵敏度vv
 //键鼠模式灵敏度vv 值为起转脉冲数
 #define TT_ACTIVE_COUNT 1

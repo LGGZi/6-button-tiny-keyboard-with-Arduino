@@ -1,8 +1,9 @@
-#ifndef HIDcmdHandler_h
+﻿#ifndef HIDcmdHandler_h
 #define HIDcmdHandler_h
 
 #include <stdint.h>
 #include "EEPROMManager.h"
+#include "LayoutManager.h"
 //六键机械键盘没有霍尔，所以不包含 HallUnitManager.h
 // Byte 1, CMD Code
 #define CMD_SET_MAP      0x01
@@ -35,6 +36,8 @@
 #define QUERY_PARAM         0x01
 #define QUERY_CALIB         0x02
 #define QUERY_DEVICE_INFO   0xFF
+// 查询配列（布局）：[1] = QUERY_LAYOUT，逐键回 0xFE 帧后回 FIN
+#define QUERY_LAYOUT        0xFE
 // 查询指令布局：[0]=CMD_QUERY [1]=查询内容 [2]=CQ_ALL/CQ_SINGLE [3]=按键号 [7]=序号
 //Byte 2, When refresh
 #define REFRESH_MAPPING       0x00
@@ -57,15 +60,15 @@ uint8_t pre_cmd[8];
 
 /*-------------------------------------------------------------
 独立的设备信息报文：结构为 
-[0xFF]、 [BUTTONCOUNT]、 [是否为磁轴0xF0 == y|0x0F == n]、 [编码器数量，0就是没有）]、 [设备类型（保留给后续手台主控使用）]、 
-后二位保留、最后一位固件版本号
+[0xFF]、 [BUTTONCOUNT]、 [是否为磁轴0xF0 == y|0x0F == n]、 [编码器数量，0就是没有）]、 [设备类型（保留给后续手台主控使用）]、
+[布局类型 layoutKind，0=旧设备/0xFF=自定义]、[保留]、[固件版本号]
 版本号格式示例 0 1 | 0 1 1 | 0 0 1  ==  1.31
 前两位小数点前整数、中间三位小数点后一位、最后三位为小数点后第二位
 */
 void HIDDeviceInfoUpload(){
     //编码器数量填 1：硬件上留了编码器（ENC_L_A/B = 2/3），功能目前只是保留
     //设备类型沿用 0x01（保留给后续手台主控使用）
-    uint8_t resp[8] = { 0xFF, BUTTONCOUNT, 0x0F, 0x01, 0x01, 0, 0, FIRMWARE_VERSION };
+    uint8_t resp[8] = { 0xFF, BUTTONCOUNT, 0x0F, 0x01, 0x01, LAYOUT_KIND, 0, FIRMWARE_VERSION };
     HID().SendReport(4, resp, 8);
 }
 
@@ -187,6 +190,9 @@ void HIDcmdResponse(const uint8_t *report_cmd) {
             uint8_t key        = cmd_buf[3];   //Byte4
             if(query_what == QUERY_DEVICE_INFO){
                 HIDDeviceInfoUpload();
+            }else if(query_what == QUERY_LAYOUT){
+                HIDLayoutUpload(cmd_buf);
+                HIDSendFin(cmd_buf);
             }else{
                 HIDQueryUpload(query_what, query_scope, key);
                 HIDSendFin(cmd_buf);

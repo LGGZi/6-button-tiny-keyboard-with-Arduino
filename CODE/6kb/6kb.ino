@@ -3,7 +3,7 @@
 #include <EEPROM.h>
 #include "HIDcmdHandler.h"
 #include "KeyManager.h"
-#include "Universal.h"
+
 CRGB leds[BUTTONCOUNT];
 CRGB color_of_each[BUTTONCOUNT];
 uint8_t mode = 0;
@@ -33,7 +33,13 @@ void setup() {
   //把 EEPROM 里的按键映射和去抖时间载入到内存（上电只做这一次，改了要重新插拔才生效）
   debounceGetFromEEPROM();
   keyCodeInit();
-  // Serial.begin(9600);
+  #if DEBUG
+    Serial.begin(9600);
+    while (!Serial) {
+      ; // 等待串口连接，仅适用于 USB CDC 板子
+    }
+    Serial.println("Serial connected");
+  #endif
 }
 
 void loop() {
