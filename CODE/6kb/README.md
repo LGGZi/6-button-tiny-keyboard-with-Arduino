@@ -1,4 +1,4 @@
-# 六键键盘固件结构说明（6kb）
+﻿# 六键键盘固件结构说明（6kb）
 
 本文档说明这套固件的**代码结构、数据流和关键约定**，用于排查问题和给后来人做参考。
 代码里的中文注释是“为什么这么写”，本文档回答“整体是怎么运转的”。
@@ -182,12 +182,54 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 
 ---
 
-## 8. 灯光（WS2812）
+## 8. 灯光（`WS2812BManager.h`）
 
-- 灯带接 **D4**，6 颗，`FastLED.addLeds<WS2812, 4, GRB>`；
-- 每颗灯的颜色在 `color_of_each[]` 里（默认全红），要改灯效改这里；
-- `loop` 里每 7 轮 `FastLED.show()` 一次，避免刷新太频繁拖慢扫描；
-- 灯由 **`buttonbuf`（物理按下）** 驱动：按下亮、松开灭。
+灯带接 **D4**，6 颗 WS2812B，全部灯效集中在新文件 `WS2812BManager.h` 里。
+
+### 8.1 调用方式
+
+```c
+// setup()
+wsInit();                        // FastLED.addLeds + 清屏
+wsSetBaseColor(CRGB::Red);       // 基础色
+wsSetBrightness(128);            // 亮度
+wsSetEffect(LED_EFFECT_PRESS);   // 默认：按下即亮（原有效果）
+
+// loop()，放在 keyOperation(getKeyState()) 之后
+wsTick();                        // 内部按 20ms 限速（50fps），每帧只 show 一次
+```
+
+要点：
+
+- `wsTick()` 内部自己限速，主循环里随便调，不会每轮都重算颜色；
+- 每帧只 `FastLED.show()` 一次（6 颗灯约 200µs），比原来"每 N 轮 show 一次"省得多；
+- 效果只用整数运算（`sin8` / `beatsin8` / `HeatColor` 都是查表实现），没有浮点；
+- RAM：`wsLeds` 18B + `wsHeat` 6B + `wsRippleLevel` 6B ≈ 30B；Flash 约 +2.1KB。
+
+### 8.2 内置灯效
+
+| 编号 | 宏 | 效果 | 说明 |
+|---|---|---|---|
+| 0 | `LED_EFFECT_OFF` | 全灭 | |
+| 1 | `LED_EFFECT_SOLID` | 常亮 | 基础色 |
+| 2 | `LED_EFFECT_PRESS` | 按下即亮 | 原有效果，默认 |
+| 3 | `LED_EFFECT_PRESS_FADE` | 按下 + 余辉 | 松开后渐灭（每帧 -9%） |
+| 4 | `LED_EFFECT_TYPING_HEAT` | 打字热度 | 越按越亮，之后慢慢冷却 |
+| 5 | `LED_EFFECT_RAINBOW` | 彩虹流动 | 6 颗灯环上均匀分布 |
+| 6 | `LED_EFFECT_BREATH` | 呼吸 | 亮度正弦起伏 |
+| 7 | `LED_EFFECT_WAVE` | 波浪 | 相邻灯错相位 |
+| 8 | `LED_EFFECT_SPARKLE` | 星光 | 随机点亮 + 拖尾，按住的键常亮 |
+| 9 | `LED_EFFECT_RIPPLE` | 涟漪 | 松开时从该键向两侧扩散衰减 |
+
+切换：`wsSetEffect(LED_EFFECT_RAINBOW);`（切换时自动清屏、清掉旧状态）。
+颜色 / 亮度：`wsSetBaseColor(CRGB::Blue)`、`wsSetBaseColorRGB(r,g,b)`、`wsSetBrightness(0~255)`。
+
+### 8.3 为什么不选别的效果
+
+- 音乐律动：要麦克风或音频输入，本板没有；
+- 火焰 / 噪声类：`inoise8` 每帧每灯一次噪声计算，AVR 上偏重；
+- 渐变拖尾需要大查找表：Flash 只有 28KB，留给灯效的预算大约 2KB；
+- 呼吸 / 彩虹如果用 `sin()` 浮点会拉进软浮点库（约 1.5KB），所以统一用 `beatsin8` / `sin8`。
 
 ---
 
