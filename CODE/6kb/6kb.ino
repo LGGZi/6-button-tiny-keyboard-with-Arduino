@@ -28,7 +28,7 @@ void setup() {
   pinMode(ENC_L_A,INPUT_PULLUP);
   pinMode(ENC_L_B,INPUT_PULLUP);
   //把 EEPROM 里的按键映射和去抖时间载入到内存（上电只做这一次，改了要重新插拔才生效）
-  debounceGetFromEEPROM();
+  debounceTimeGetFromEEPROM();
   keyCodeInit();
 }
 

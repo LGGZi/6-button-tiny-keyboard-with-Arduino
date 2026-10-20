@@ -16,6 +16,7 @@
 #define CMD_SET_LED      0x08   // 即时设置灯效：[1]=effect [2]=亮度 [3]=速度 [4..6]=主色 RGB
 #define CMD_SET_LED_ACCENT 0x09 // 即时设置副色：[1..3]=副色 RGB
 #define CMD_SAVE_LED     0x0A   // 把当前灯效参数写进 EEPROM：[1]=0x5A 确认
+#define CMD_SET_LED_FPS  0x0B   // 单独设置灯效刷新率：[1]=fps（10~200）
 
 // Byte 2, Device, when mapping keys
 #define NO_DEVICE 0x00
@@ -215,6 +216,11 @@ void HIDcmdResponse(const uint8_t *report_cmd) {
         }
         case CMD_SET_LED_ACCENT: {
             wsSetColor2RGB(cmd_buf[1], cmd_buf[2], cmd_buf[3]);
+            HIDSendFin(cmd_buf);
+        break;
+        }
+        case CMD_SET_LED_FPS: {
+            wsSetFps(cmd_buf[1]);
             HIDSendFin(cmd_buf);
         break;
         }

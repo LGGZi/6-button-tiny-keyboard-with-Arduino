@@ -168,7 +168,7 @@ void keyCodeClearAll(){
 }
 //读取抬起去抖时间：没写过（0 / 0xFF）或者超出范围就保持默认值
 //（EEPROM 操作都放在这个文件里，别的地方只调用）
-void debounceGetFromEEPROM(){
+void debounceTimeGetFromEEPROM(){
   uint8_t value = 0;
   EEPROM.get(DEBOUNCE_EEPROM_POS, value);
   if(value >= DEBOUNCE_MIN && value <= DEBOUNCE_MAX){
@@ -180,7 +180,9 @@ bool ledParamsAreValid(const LEDParams_t *p){
   return p->magic == LED_PARAMS_MAGIC
       && p->effect < LED_EFFECT_COUNT
       && p->speed >= LED_SPEED_MIN
-      && p->speed <= LED_SPEED_MAX;
+      && p->speed <= LED_SPEED_MAX
+      && p->fps >= LED_FPS_MIN
+      && p->fps <= LED_FPS_MAX;
 }
 
 //把全局 ledParams 整块写进 EEPROM（调用前先把 magic 补上）

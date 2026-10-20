@@ -204,27 +204,28 @@ ledParamsGetFromEEPROM();    // 读灯效参数；无效就用默认值并写入
 wsTick(buttonbuf);           // 内部 20ms 限速（50fps），每帧只 show 一次
 ```
 
-### 8.2 参数结构体 `LEDParams_t`（9 字节，EEPROM 里就是这 9 个字节）
+### 8.2 参数结构体 `LEDParams_t`（10 字节，EEPROM 里就是这 10 个字节）
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `magic` | uint8 | `0x5A`，用来判断 EEPROM 里有没有有效数据 |
-| `effect` | uint8 | 灯效编号 0~11 |
+| `magic` | uint8 | `0x5B`，用来判断 EEPROM 里有没有有效数据（改布局时换一个值） |
+| `effect` | uint8 | 灯效编号 0~22 |
 | `brightness` | uint8 | 亮度 0~255 |
-| `speed` | uint8 | 速度 1~20（1 最慢，20 最快） |
+| `speed` | uint8 | 动画速度 1~20（1 最慢，20 最快） |
+| `fps` | uint8 | 刷新率 10~200（默认 50） |
 | `color1[3]` | uint8 | 主色 RGB |
-| `color2[3]` | uint8 | 副色 RGB（跑马灯 / 双色呼吸用） |
+| `color2[3]` | uint8 | 副色 RGB |
 
-全局只有一份 `ledParams`；修改一律走 `wsSetEffect / wsSetBrightness / wsSetSpeed /
-wsSetColor1RGB / wsSetColor2RGB`（一次只改一个字段）。
+全局只有一份 `ledParams`；修改走 `wsSetEffect / wsSetBrightness / wsSetSpeed /
+wsSetFps / wsSetColor1RGB / wsSetColor2RGB`（一次只改一个字段）。
 
 ### 8.3 EEPROM 布局
 
 ```
 偏移 0        去抖时间（1 字节）
 偏移 1        按键映射区：BUTTONCOUNT * KEYMAP_SIZE_PER_KEY = 6 * 24 = 144 字节
-偏移 145      灯光参数区：LED_PARAMS_START_POSITION，整块 9 字节
-合计          154 字节
+偏移 145      灯光参数区：LED_PARAMS_START_POSITION，整块 10 字节
+合计          155 字节
 ```
 
 偏移由宏计算，不要写死：
@@ -236,25 +237,48 @@ wsSetColor1RGB / wsSetColor2RGB`（一次只改一个字段）。
 读写用整块结构体：`EEPROM.get(pos, temp)` → `memcpy(&ledParams, &temp, sizeof(LEDParams_t))`，
 保存用 `EEPROM.put(pos, ledParams)`。
 
-### 8.4 灯效
+### 8.4 灯效（三组）
+
+**单色组（只用主色）**
 
 | 编号 | 宏 | 效果 |
 |---|---|---|
 | 0 | `LED_EFFECT_OFF` | 全灭 |
-| 1 | `LED_EFFECT_SOLID` | 常亮（主色） |
-| 2 | `LED_EFFECT_PRESS` | 按下即亮（原有效果，默认） |
-| 3 | `LED_EFFECT_PRESS_FADE` | 按下亮 + 松开余辉 |
-| 4 | `LED_EFFECT_TYPING_HEAT` | 打字热度，按键越多越亮，之后冷却 |
-| 5 | `LED_EFFECT_RAINBOW` | 彩虹（按列/行错开色相） |
-| 6 | `LED_EFFECT_BREATH` | 呼吸（主色） |
-| 7 | `LED_EFFECT_WAVE` | 波浪（同一列的灯同步） |
-| 8 | `LED_EFFECT_SPARKLE` | 星光（随机点亮 + 拖尾，按住的键常亮） |
-| 9 | `LED_EFFECT_RIPPLE` | 涟漪：松开后按**物理距离**从该键向外扩散 |
-| 10 | `LED_EFFECT_COMET` | 跑马灯（副色灯珠 + 两格拖尾） |
-| 11 | `LED_EFFECT_DUAL_BREATH` | 双色呼吸（主色 ↔ 副色渐变） |
+| 1 | `LED_EFFECT_SOLID` | 常亮 |
+| 2 | `LED_EFFECT_PRESS` | 按下即亮（默认） |
+| 3 | `LED_EFFECT_PRESS_FADE` | 按下 + 松开余辉 |
+| 4 | `LED_EFFECT_TYPING_HEAT` | 打字热度 |
+| 5 | `LED_EFFECT_BREATH` | 呼吸 |
+| 6 | `LED_EFFECT_WAVE` | 波浪 |
+| 7 | `LED_EFFECT_SPARKLE` | 星光 |
+| 8 | `LED_EFFECT_RIPPLE` | 涟漪 |
+| 9 | `LED_EFFECT_COMET_MONO` | 跑马灯 |
 
-涟漪、彩虹、波浪都用到了 2×3 的物理排布（`wsKeyCol / wsKeyRow / wsKeyDistance`），
-所以扩散方向和色相是按真实位置走的，不是按编号线性走。
+**炫彩组（HSV 彩虹，不使用颜色参数）**
+
+| 编号 | 宏 | 效果 |
+|---|---|---|
+| 10 | `LED_EFFECT_RAINBOW` | 彩虹流动 |
+| 11 | `LED_EFFECT_RAINBOW_BREATH` | 彩虹呼吸 |
+| 12 | `LED_EFFECT_RAINBOW_WAVE` | 彩虹波浪 |
+| 13 | `LED_EFFECT_RAINBOW_SPARKLE` | 彩虹星光 |
+| 14 | `LED_EFFECT_COMET_RAINBOW` | 彩虹跑马 |
+
+**双色组（主色 ↔ 副色）**
+
+| 编号 | 宏 | 效果 |
+|---|---|---|
+| 15 | `LED_EFFECT_DUAL_BREATH` | 双色呼吸（两色之间渐变） |
+| 16 | `LED_EFFECT_DUAL_PRESS` | 按下 = 副色，松开 = 主色 |
+| 17 | `LED_EFFECT_DUAL_PRESS_FADE` | 按下 = 副色，松开渐回主色 |
+| 18 | `LED_EFFECT_DUAL_WAVE` | 双色波浪 |
+| 19 | `LED_EFFECT_DUAL_COMET` | 双色跑马（头副色、尾主色） |
+| 20 | `LED_EFFECT_DUAL_TYPING` | 双色打字热度（冷副色 → 热主色） |
+| 21 | `LED_EFFECT_DUAL_GRADIENT` | 左右渐变（左主色 → 右副色） |
+| 22 | `LED_EFFECT_DUAL_RIPPLE` | 双色涟漪 |
+
+涟漪、彩虹、波浪、渐变都用到了 2×3 的物理排布（`wsKeyCol / wsKeyRow / wsKeyDistance`），
+扩散方向和色相按真实位置走。
 
 ### 8.5 上位机指令（Report ID 4，8 字节）
 
@@ -262,10 +286,11 @@ wsSetColor1RGB / wsSetColor2RGB`（一次只改一个字段）。
 |---|---|---|
 | `CMD_SET_LED` | 0x08 | `[1]=effect [2]=亮度 [3]=速度 [4..6]=主色 RGB [7]=序号` |
 | `CMD_SET_LED_ACCENT` | 0x09 | `[1..3]=副色 RGB [7]=序号` |
-| `CMD_SAVE_LED` | 0x0A | `[1]=0x5A`（确认字节）`[7]=序号` |
+| `CMD_SAVE_LED` | 0x0A | `[1]=0x5B`（确认字节）`[7]=序号` |
+| `CMD_SET_LED_FPS` | 0x0B | `[1]=fps（10~200）[7]=序号` |
 
-前两条**立即生效但不保存**，第三条才把当前 `ledParams` 写进 EEPROM。
-每条都会先回 ACK、再回 FIN，和其它指令一致。
+前三条（08/09/0B）**立即生效但不保存**，`0A` 才把当前 `ledParams` 写进 EEPROM。
+每条都会先回 ACK、再回 FIN。
 
 ### 8.6 性能
 
