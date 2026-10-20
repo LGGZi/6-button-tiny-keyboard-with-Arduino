@@ -260,8 +260,10 @@ void HIDcmdResponse(const uint8_t *report_cmd) {
         break;
         }
         case CMD_SAVE_LED: {
-            //多一道 0x5A 确认，避免误发一条就把 EEPROM 写掉
-            if(cmd_buf[1] == LED_PARAMS_MAGIC){
+            //多一道确认字节，避免误发一条就把 EEPROM 写掉。
+            //必须用 LED_SAVE_CONFIRM（0x5A），不能用结构体的 LED_PARAMS_MAGIC（0x5B）：
+            //之前两者混用，上位机发的 0x5A 永远对不上，保存就被静默忽略了。
+            if(cmd_buf[1] == LED_SAVE_CONFIRM){
                 ledParamsSaveToEEPROM();
             }
             HIDSendFin(cmd_buf);

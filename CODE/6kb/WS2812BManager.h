@@ -81,6 +81,8 @@
 // 参数结构体（EEPROM 里就是这 10 个字节）
 // ---------------------------------------------------------------------------
 #define LED_PARAMS_MAGIC    0x5B
+// 保存指令的确认字节：和结体内 magic 分开，改结构体布局时不会再把保存弄坏
+#define LED_SAVE_CONFIRM    0x5A
 
 typedef struct LEDparams {
   uint8_t magic;

@@ -211,7 +211,6 @@ void keyCodeInit() {
   }
 }
 
-//六键机械键盘没有磁轴参数，所以没有 keyParameterInit() / keyParameterSet() 这些函数
 #if DEBUG
   void showBinding(uint8_t key, uint8_t slot){
     int index = keyMapSlotToEEPROMIndex(key, slot);
