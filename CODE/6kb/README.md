@@ -162,6 +162,9 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 | `CMD_SET_PARAM` | 0x02 | **未实现**（六键没有磁轴参数；去抖时间暂不开放给上位机） |
 | `CMD_CALIBRATE` | 0x03 | 未实现 |
 | `CMD_QUERY` | 0x04 | `[1]=0 映射 / 0xFE 布局 / 0xFF 设备信息` |
+
+> `[6]` 是**这套固件要求的上位机版本**（2|3|3 位，`HOST_VERSION_REQUIRED`，当前 `0x47` = 1.07）；上位机连上后会和自己的版本比对，低于它就在状态栏/日志提示升级。
+> `[7]` 是固件版本（`FIRMWARE_VERSION`）。
 | `CMD_ACK` / `CMD_FIN` | 0x05 / 0x06 | 回传 |
 | `CMD_REFRESH` | 0x07 | `[1]=0` 重新载入映射 |
 
