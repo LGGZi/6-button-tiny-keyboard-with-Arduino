@@ -17,6 +17,9 @@
 #define CMD_SET_LED_ACCENT 0x09 // 即时设置副色：[1..3]=副色 RGB
 #define CMD_SAVE_LED     0x0A   // 把当前灯效参数写进 EEPROM：[1]=0x5A 确认
 #define CMD_SET_LED_FPS  0x0B   // 单独设置灯效刷新率：[1]=fps（10~200）
+// 查询灯效的回传帧类型
+#define LED_ITEM_BASIC   0x0C   // [1]=effect [2]=亮度 [3]=速度 [4]=fps
+#define LED_ITEM_COLORS  0x0D   // [1..3]=主色 RGB [4..6]=副色 RGB
 
 // Byte 2, Device, when mapping keys
 #define NO_DEVICE 0x00
@@ -42,6 +45,8 @@
 #define QUERY_DEVICE_INFO   0xFF
 // 查询配列（布局）：[1] = QUERY_LAYOUT，逐键回 0xFE 帧后回 FIN
 #define QUERY_LAYOUT        0xFE
+// 查询灯效：回 0x0C / 0x0D 两帧，最后回 FIN
+#define QUERY_LED           0x03
 // 查询指令布局：[0]=CMD_QUERY [1]=查询内容 [2]=CQ_ALL/CQ_SINGLE [3]=按键号 [7]=序号
 //Byte 2, When refresh
 #define REFRESH_MAPPING       0x00
@@ -102,6 +107,33 @@ void HIDSendMapItem(uint8_t device, uint8_t key, uint8_t offset, uint8_t slot) {
     uint8_t resp[8] = { CMD_SET_MAP, device, key, offset, MAP_DO_OVERRIDE, slot, 0, 0 };
     HID().SendReport(4, resp, 8);
 }
+/*
+  灯效参数上传：两帧（8 字节塞不下 10 个参数字节）
+    [0]=0x0C  [1]=effect [2]=亮度 [3]=速度 [4]=fps
+    [0]=0x0D  [1..3]=主色  [4..6]=副色
+  两帧的 [7] 都回填查询指令的序号，上位机靠它配对。
+*/
+void HIDLedUpload(const uint8_t *cmd_buf) {
+    uint8_t seq = cmd_buf[7];
+    uint8_t basic[8] = {
+        LED_ITEM_BASIC,
+        ledParams.effect,
+        ledParams.brightness,
+        ledParams.speed,
+        ledParams.fps,
+        0, 0, seq
+    };
+    HID().SendReport(4, basic, 8);
+
+    uint8_t colors[8] = {
+        LED_ITEM_COLORS,
+        ledParams.color1[0], ledParams.color1[1], ledParams.color1[2],
+        ledParams.color2[0], ledParams.color2[1], ledParams.color2[2],
+        seq
+    };
+    HID().SendReport(4, colors, 8);
+}
+
 void HIDQueryUpload(uint8_t queryWhat, uint8_t queryScope, uint8_t key) {
     if(queryScope == CQ_SINGLE && !(key < BUTTONCOUNT)){
         return;   //单键查询的按键号非法
@@ -196,6 +228,9 @@ void HIDcmdResponse(const uint8_t *report_cmd) {
                 HIDDeviceInfoUpload();
             }else if(query_what == QUERY_LAYOUT){
                 HIDLayoutUpload(cmd_buf);
+                HIDSendFin(cmd_buf);
+            }else if(query_what == QUERY_LED){
+                HIDLedUpload(cmd_buf);
                 HIDSendFin(cmd_buf);
             }else{
                 HIDQueryUpload(query_what, query_scope, key);
