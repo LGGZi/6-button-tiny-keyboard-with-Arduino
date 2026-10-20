@@ -150,8 +150,22 @@ static inline uint8_t wsFadeStep() {
 
 static inline CRGB wsMix(CRGB a, CRGB b, uint8_t t) { return blend(a, b, t); }
 
-// 亮度乘一个系数（不改色相）
-static inline CRGB wsDim(CRGB c, uint8_t t) { c.nscale8_video(t); return c; }
+/*
+  亮度乘一个系数（level=0 全黑，255 保持原亮度），不改色相。
+  注意：CRGB::nscale8_video(x) 的 x 是“减暗量”，不是亮度系数，
+  这里必须用自由函数 scale8_video(i, level)（乘 level/255）。
+*/
+static inline uint8_t wsScale(uint8_t v, uint8_t level) {
+  if (level >= 255) return v;
+  return scale8(v, level);        // scale8 会真正到 0；scale8_video 最低留 1，永远关不灭
+}
+
+static inline CRGB wsDim(CRGB c, uint8_t level) {
+  c.r = wsScale(c.r, level);
+  c.g = wsScale(c.g, level);
+  c.b = wsScale(c.b, level);
+  return c;
+}
 
 // ---------------------------------------------------------------------------
 // 参数接口
@@ -170,6 +184,9 @@ void wsApplyParams() { FastLED.setBrightness(ledParams.brightness); }
 
 void wsInit() {
   FastLED.addLeds<WS2812, WS_PIN, GRB>(wsLeds, WS_LED_COUNT);
+  //关掉亮度抖动：亮度 < 255 时 FastLED 会逐帧加 1 LSB 的噪声，
+  //在低亮度、渐变色上看起来像"闪一下别的颜色"
+  FastLED.setDither(DISABLE_DITHER);
   FastLED.clear(true);
   memset(wsHeat, 0, sizeof(wsHeat));
   wsPrevKeys  = 0;
@@ -182,6 +199,8 @@ void wsInit() {
 
 void wsSetEffect(uint8_t effect) {
   if (effect >= LED_EFFECT_COUNT) return;
+  //同一个效果只是改了颜色/亮度/速度时，保留相位和状态，不要重置（否则画面会跳一帧）
+  if (effect == ledParams.effect) return;
   ledParams.effect = effect;
   wsPhase = 0;
   wsHue   = 0;
@@ -283,7 +302,7 @@ static void wsDrawRipple(bool dual, uint16_t keyState) {
   }
 
   CRGB c1 = wsColor1(), c2 = wsColor2();
-  CRGB idle = dual ? wsDim(wsMix(c1, c2, 90), 22) : wsDim(c1, 22);   // 待机时一点点底光
+  CRGB idle = CRGB::Black;      // 待机完全熄灭，涟漪结束后不残留
 
   //距离延迟和衰减时长都跟随 speed（1 → 78ms/格、1.75s；20 → 40ms/格、0.8s）
   uint16_t delayMs = 80 - (uint16_t)ledParams.speed * 2;
@@ -349,8 +368,7 @@ static void wsBreath() {
 static void wsWave() {
   CRGB c = wsColor1();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    wsLeds[i] = c;
-    wsLeds[i].nscale8_video(sin8(wsPhase + wsKeyCol(i) * 60 + wsKeyRow(i) * 20));
+    wsLeds[i] = wsDim(c, sin8(wsPhase + wsKeyCol(i) * 60 + wsKeyRow(i) * 20));
   }
   wsPhase += wsPhaseStep();
 }
@@ -402,9 +420,14 @@ static void wsRainbowSparkle(uint16_t keyState) {
 // ---------------------------------------------------------------------------
 // 双色组
 // ---------------------------------------------------------------------------
-// 双色呼吸：相位自己累加，sin8 输出 0~255，端点连续（不会在周期结束突变）
+/*
+  双色呼吸：三角波 0 -> 255 -> 0，端点精确、严格单调，
+  不依赖 sin 表的偏移/量化，也就不会在周期交界出现“闪一下别的颜色”。
+*/
 static void wsDualBreath() {
-  fill_solid(wsLeds, WS_LED_COUNT, wsMix(wsColor1(), wsColor2(), sin8(wsBreathPhase)));
+  uint8_t t = (wsBreathPhase < 128) ? (uint8_t)(wsBreathPhase * 2)
+                                    : (uint8_t)((255 - wsBreathPhase) * 2);
+  fill_solid(wsLeds, WS_LED_COUNT, wsMix(wsColor1(), wsColor2(), t));
   wsBreathPhase += wsScaleByDt(1 + (ledParams.speed >> 2));
 }
 
