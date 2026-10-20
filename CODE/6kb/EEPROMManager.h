@@ -1,13 +1,16 @@
-#ifndef EEPROMManager_h
+﻿#ifndef EEPROMManager_h
 #define EEPROMManager_h
 #include "Universal.h"
 #include <EEPROM.h>
+#include "WS2812BManager.h"      // 灯效参数结构体 LEDParams_t / ledParams
 
 #define DEBOUNCE_EEPROM_POS 0
 #define DEBOUNCE_MIN 1
 #define DEBOUNCE_MAX 20
 //映射区起始位置，紧跟在按键参数区之后
 #define KEYMAP_START_POSITION 1
+//灯光参数区：紧跟在映射区之后，整块就是一个 LEDParams_t（9 字节）
+#define LED_PARAMS_START_POSITION (KEYMAP_START_POSITION + BUTTONCOUNT * KEYMAP_SIZE_PER_KEY)
 
 //按 (key, slot) 直接算出映射在 EEPROM 里的位置：
 //每个按键占 KEYMAP_SIZE_PER_KEY 字节，按键之间依次紧挨；
@@ -172,6 +175,33 @@ void debounceGetFromEEPROM(){
     release_debounce = value;
   }
 }
+//-------- 灯光参数：整块结构体直接存 / 读 --------
+bool ledParamsAreValid(const LEDParams_t *p){
+  return p->magic == LED_PARAMS_MAGIC
+      && p->effect < LED_EFFECT_COUNT
+      && p->speed >= LED_SPEED_MIN
+      && p->speed <= LED_SPEED_MAX;
+}
+
+//把全局 ledParams 整块写进 EEPROM（调用前先把 magic 补上）
+void ledParamsSaveToEEPROM(){
+  ledParams.magic = LED_PARAMS_MAGIC;
+  EEPROM.put(LED_PARAMS_START_POSITION, ledParams);
+}
+
+//上电读一次：有效就 memcpy 到全局结构体，无效（0xFF / 旧数据）就写默认值并保存
+void ledParamsGetFromEEPROM(){
+  LEDParams_t temp;
+  EEPROM.get(LED_PARAMS_START_POSITION, temp);
+  if(ledParamsAreValid(&temp)){
+    memcpy(&ledParams, &temp, sizeof(LEDParams_t));
+  }else{
+    ledParamsSetDefault();
+    ledParamsSaveToEEPROM();
+  }
+  wsApplyParams();
+}
+
 void keyCodeInit() {
   memset(key_map, 0, sizeof(key_map));
   for(uint8_t key = 0; key < BUTTONCOUNT; key++){

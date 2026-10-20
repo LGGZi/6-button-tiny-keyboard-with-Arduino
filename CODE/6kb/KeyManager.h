@@ -9,7 +9,6 @@
 static unsigned long time_Now = 0;
 static unsigned long time_Pre[BUTTONCOUNT] = {0};
 static uint16_t key_trigger_state = 0;
-volatile uint16_t buttonbuf = 1;
 
 void reportBufferClear(){
   memset(&report, 0, sizeof(report));
@@ -60,6 +59,7 @@ void keyOperation(uint16_t keyTriggerState){
 }
 
 uint16_t getKeyState(){
+  static uint16_t buttonbuf = 0;
   //按键扫描：返回"哪几个键被按下了"的位图（bit0 = 按键0）
   //去抖原理为按下时立刻算按下，抬起则要连续 release_debounce 毫秒都检测到抬起才确认抬起
   //（release_debounce 是单独的变量，默认 1ms，和原来的行为一致）

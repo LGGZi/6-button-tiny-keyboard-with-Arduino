@@ -13,6 +13,9 @@
 #define CMD_ACK          0x05
 #define CMD_FIN          0x06
 #define CMD_REFRESH      0x07
+#define CMD_SET_LED      0x08   // 即时设置灯效：[1]=effect [2]=亮度 [3]=速度 [4..6]=主色 RGB
+#define CMD_SET_LED_ACCENT 0x09 // 即时设置副色：[1..3]=副色 RGB
+#define CMD_SAVE_LED     0x0A   // 把当前灯效参数写进 EEPROM：[1]=0x5A 确认
 
 // Byte 2, Device, when mapping keys
 #define NO_DEVICE 0x00
@@ -197,6 +200,30 @@ void HIDcmdResponse(const uint8_t *report_cmd) {
                 HIDQueryUpload(query_what, query_scope, key);
                 HIDSendFin(cmd_buf);
             }
+        break;
+        }
+        // ------------------------------------------------------------
+        // 命令 8 / 9 / 10：灯效参数（即时生效 + 单独保存）
+        // ------------------------------------------------------------
+        case CMD_SET_LED: {
+            wsSetEffect(cmd_buf[1]);                       //Byte2
+            wsSetBrightness(cmd_buf[2]);                   //Byte3
+            wsSetSpeed(cmd_buf[3]);                        //Byte4
+            wsSetColor1RGB(cmd_buf[4], cmd_buf[5], cmd_buf[6]);   //Byte5~7
+            HIDSendFin(cmd_buf);
+        break;
+        }
+        case CMD_SET_LED_ACCENT: {
+            wsSetColor2RGB(cmd_buf[1], cmd_buf[2], cmd_buf[3]);
+            HIDSendFin(cmd_buf);
+        break;
+        }
+        case CMD_SAVE_LED: {
+            //多一道 0x5A 确认，避免误发一条就把 EEPROM 写掉
+            if(cmd_buf[1] == LED_PARAMS_MAGIC){
+                ledParamsSaveToEEPROM();
+            }
+            HIDSendFin(cmd_buf);
         break;
         }
         case CMD_REFRESH: {

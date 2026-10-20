@@ -184,54 +184,95 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 
 ## 8. 灯光（`WS2812BManager.h`）
 
-灯带接 **D4**，6 颗 WS2812B，全部灯效集中在新文件 `WS2812BManager.h` 里。
+灯带接 **D4**，6 颗 WS2812B，按键排布 **2 行 × 3 列**：
+
+```
+0 1 2
+3 4 5
+```
+
+所有灯效、参数、参数存取都在 `WS2812BManager.h` 里。
 
 ### 8.1 调用方式
 
 ```c
 // setup()
-wsInit();                        // FastLED.addLeds + 清屏
-wsSetBaseColor(CRGB::Red);       // 基础色
-wsSetBrightness(128);            // 亮度
-wsSetEffect(LED_EFFECT_PRESS);   // 默认：按下即亮（原有效果）
+wsInit();                    // FastLED.addLeds + 清屏
+ledParamsGetFromEEPROM();    // 读灯效参数；无效就用默认值并写入 EEPROM
 
 // loop()，放在 keyOperation(getKeyState()) 之后
-wsTick();                        // 内部按 20ms 限速（50fps），每帧只 show 一次
+wsTick(buttonbuf);           // 内部 20ms 限速（50fps），每帧只 show 一次
 ```
 
-要点：
+### 8.2 参数结构体 `LEDParams_t`（9 字节，EEPROM 里就是这 9 个字节）
 
-- `wsTick()` 内部自己限速，主循环里随便调，不会每轮都重算颜色；
-- 每帧只 `FastLED.show()` 一次（6 颗灯约 200µs），比原来"每 N 轮 show 一次"省得多；
-- 效果只用整数运算（`sin8` / `beatsin8` / `HeatColor` 都是查表实现），没有浮点；
-- RAM：`wsLeds` 18B + `wsHeat` 6B + `wsRippleLevel` 6B ≈ 30B；Flash 约 +2.1KB。
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `magic` | uint8 | `0x5A`，用来判断 EEPROM 里有没有有效数据 |
+| `effect` | uint8 | 灯效编号 0~11 |
+| `brightness` | uint8 | 亮度 0~255 |
+| `speed` | uint8 | 速度 1~20（1 最慢，20 最快） |
+| `color1[3]` | uint8 | 主色 RGB |
+| `color2[3]` | uint8 | 副色 RGB（跑马灯 / 双色呼吸用） |
 
-### 8.2 内置灯效
+全局只有一份 `ledParams`；修改一律走 `wsSetEffect / wsSetBrightness / wsSetSpeed /
+wsSetColor1RGB / wsSetColor2RGB`（一次只改一个字段）。
 
-| 编号 | 宏 | 效果 | 说明 |
-|---|---|---|---|
-| 0 | `LED_EFFECT_OFF` | 全灭 | |
-| 1 | `LED_EFFECT_SOLID` | 常亮 | 基础色 |
-| 2 | `LED_EFFECT_PRESS` | 按下即亮 | 原有效果，默认 |
-| 3 | `LED_EFFECT_PRESS_FADE` | 按下 + 余辉 | 松开后渐灭（每帧 -9%） |
-| 4 | `LED_EFFECT_TYPING_HEAT` | 打字热度 | 越按越亮，之后慢慢冷却 |
-| 5 | `LED_EFFECT_RAINBOW` | 彩虹流动 | 6 颗灯环上均匀分布 |
-| 6 | `LED_EFFECT_BREATH` | 呼吸 | 亮度正弦起伏 |
-| 7 | `LED_EFFECT_WAVE` | 波浪 | 相邻灯错相位 |
-| 8 | `LED_EFFECT_SPARKLE` | 星光 | 随机点亮 + 拖尾，按住的键常亮 |
-| 9 | `LED_EFFECT_RIPPLE` | 涟漪 | 松开时从该键向两侧扩散衰减 |
+### 8.3 EEPROM 布局
 
-切换：`wsSetEffect(LED_EFFECT_RAINBOW);`（切换时自动清屏、清掉旧状态）。
-颜色 / 亮度：`wsSetBaseColor(CRGB::Blue)`、`wsSetBaseColorRGB(r,g,b)`、`wsSetBrightness(0~255)`。
+```
+偏移 0        去抖时间（1 字节）
+偏移 1        按键映射区：BUTTONCOUNT * KEYMAP_SIZE_PER_KEY = 6 * 24 = 144 字节
+偏移 145      灯光参数区：LED_PARAMS_START_POSITION，整块 9 字节
+合计          154 字节
+```
 
-### 8.3 为什么不选别的效果
+偏移由宏计算，不要写死：
 
-- 音乐律动：要麦克风或音频输入，本板没有；
-- 火焰 / 噪声类：`inoise8` 每帧每灯一次噪声计算，AVR 上偏重；
-- 渐变拖尾需要大查找表：Flash 只有 28KB，留给灯效的预算大约 2KB；
-- 呼吸 / 彩虹如果用 `sin()` 浮点会拉进软浮点库（约 1.5KB），所以统一用 `beatsin8` / `sin8`。
+```c
+#define LED_PARAMS_START_POSITION (KEYMAP_START_POSITION + BUTTONCOUNT * KEYMAP_SIZE_PER_KEY)
+```
 
----
+读写用整块结构体：`EEPROM.get(pos, temp)` → `memcpy(&ledParams, &temp, sizeof(LEDParams_t))`，
+保存用 `EEPROM.put(pos, ledParams)`。
+
+### 8.4 灯效
+
+| 编号 | 宏 | 效果 |
+|---|---|---|
+| 0 | `LED_EFFECT_OFF` | 全灭 |
+| 1 | `LED_EFFECT_SOLID` | 常亮（主色） |
+| 2 | `LED_EFFECT_PRESS` | 按下即亮（原有效果，默认） |
+| 3 | `LED_EFFECT_PRESS_FADE` | 按下亮 + 松开余辉 |
+| 4 | `LED_EFFECT_TYPING_HEAT` | 打字热度，按键越多越亮，之后冷却 |
+| 5 | `LED_EFFECT_RAINBOW` | 彩虹（按列/行错开色相） |
+| 6 | `LED_EFFECT_BREATH` | 呼吸（主色） |
+| 7 | `LED_EFFECT_WAVE` | 波浪（同一列的灯同步） |
+| 8 | `LED_EFFECT_SPARKLE` | 星光（随机点亮 + 拖尾，按住的键常亮） |
+| 9 | `LED_EFFECT_RIPPLE` | 涟漪：松开后按**物理距离**从该键向外扩散 |
+| 10 | `LED_EFFECT_COMET` | 跑马灯（副色灯珠 + 两格拖尾） |
+| 11 | `LED_EFFECT_DUAL_BREATH` | 双色呼吸（主色 ↔ 副色渐变） |
+
+涟漪、彩虹、波浪都用到了 2×3 的物理排布（`wsKeyCol / wsKeyRow / wsKeyDistance`），
+所以扩散方向和色相是按真实位置走的，不是按编号线性走。
+
+### 8.5 上位机指令（Report ID 4，8 字节）
+
+| 指令 | 值 | 字节布局 |
+|---|---|---|
+| `CMD_SET_LED` | 0x08 | `[1]=effect [2]=亮度 [3]=速度 [4..6]=主色 RGB [7]=序号` |
+| `CMD_SET_LED_ACCENT` | 0x09 | `[1..3]=副色 RGB [7]=序号` |
+| `CMD_SAVE_LED` | 0x0A | `[1]=0x5A`（确认字节）`[7]=序号` |
+
+前两条**立即生效但不保存**，第三条才把当前 `ledParams` 写进 EEPROM。
+每条都会先回 ACK、再回 FIN，和其它指令一致。
+
+### 8.6 性能
+
+- 固定 50fps，每帧只 `FastLED.show()` 一次（6 颗灯约 200µs）；
+- 全部整数运算：`sin8` / `beatsin8` / `HeatColor` / `scale8` 都是查表实现，没有浮点；
+- 唯一的查找表是跑马灯拖尾的 3 字节 PROGMEM 表（`wsCometTrail`），不占 RAM；
+- RAM：`wsLeds` 18B + 热度 6B + 参数 9B ≈ 33B；Flash 约 +2.9KB。
 
 ## 9. 已知的坑与注意点
 
