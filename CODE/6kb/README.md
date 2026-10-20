@@ -268,14 +268,23 @@ wsSetFps / wsSetColor1RGB / wsSetColor2RGB`（一次只改一个字段）。
 
 | 编号 | 宏 | 效果 |
 |---|---|---|
-| 15 | `LED_EFFECT_DUAL_BREATH` | 双色呼吸（两色之间渐变） |
+| 15 | `LED_EFFECT_DUAL_BREATH` | 双色呼吸（`sin8` 相位驱动，0~255 全范围） |
 | 16 | `LED_EFFECT_DUAL_PRESS` | 按下 = 副色，松开 = 主色 |
-| 17 | `LED_EFFECT_DUAL_PRESS_FADE` | 按下 = 副色，松开渐回主色 |
-| 18 | `LED_EFFECT_DUAL_WAVE` | 双色波浪 |
-| 19 | `LED_EFFECT_DUAL_COMET` | 双色跑马（头副色、尾主色） |
-| 20 | `LED_EFFECT_DUAL_TYPING` | 双色打字热度（冷副色 → 热主色） |
-| 21 | `LED_EFFECT_DUAL_GRADIENT` | 左右渐变（左主色 → 右副色） |
-| 22 | `LED_EFFECT_DUAL_RIPPLE` | 双色涟漪 |
+| 17 | `LED_EFFECT_DUAL_PRESS_FADE` | 按下 = 副色；松开后**该键**的余量衰减回 0，背景恒为主色 |
+| 18 | `LED_EFFECT_DUAL_WAVE` | 双色波浪（列错相 85、行错相 30，全范围插值） |
+| 19 | `LED_EFFECT_DUAL_COMET` | 双色跑马（头副色 → 尾两格过渡 → 末端纯主色微光） |
+| 20 | `LED_EFFECT_DUAL_TYPING` | 双色打字热度（冷副色 → 热主色，直接由热度算色，不做二次混合） |
+| 21 | `LED_EFFECT_DUAL_GRADIENT` | 左右渐变（0 / 127 / 255 三段取满） |
+| 22 | `LED_EFFECT_DUAL_RIPPLE` | 双色涟漪（延迟与衰减都跟随 speed，约 0.9~2.0s） |
+
+双色组的实现约定（避免之前的闪烁/突变）：
+
+- **背景颜色只由 `color1` 决定**：按下类效果用每键独立的 `wsGlow[]` 记录“副色余量”，
+  余量 0 时就是纯主色，亮度不变；
+- **不用帧缓冲回溯**：所有颜色都从 `color1/color2` 和状态量直接算出来，
+  不会出现“从上一帧的中间色再混一次”；
+- **呼吸/波浪用自己累加的相位 + `sin8`**，端点连续，不受库函数周期行为影响；
+- **涟漪**：单次触发，延迟 80-2×speed ms/格，衰减 1800-50×speed ms。
 
 涟漪、彩虹、波浪、渐变都用到了 2×3 的物理排布（`wsKeyCol / wsKeyRow / wsKeyDistance`），
 扩散方向和色相按真实位置走。

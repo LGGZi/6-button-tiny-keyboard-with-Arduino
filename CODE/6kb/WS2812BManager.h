@@ -101,6 +101,8 @@ static uint16_t wsDt          = WS_DT_REF_MS;   // 本帧经过的毫秒（限�
 static uint8_t  wsPhase       = 0;
 static uint8_t  wsHue         = 0;
 static uint8_t  wsHeat[WS_LED_COUNT];
+static uint8_t  wsGlow[WS_LED_COUNT];            // 双色按下后的副色余量（0 = 纯主色）
+static uint8_t  wsBreathPhase = 0;               // 双色呼吸相位（0~255 循环）
 static uint8_t  wsCometPos    = 0;
 static uint16_t wsCometAcc    = 0;              // 彗星走格累计毫秒
 static uint16_t wsPrevKeys    = 0;
@@ -184,6 +186,8 @@ void wsSetEffect(uint8_t effect) {
   wsPhase = 0;
   wsHue   = 0;
   memset(wsHeat, 0, sizeof(wsHeat));
+  for (uint8_t i = 0; i < WS_LED_COUNT; i++) wsGlow[i] = 0;
+  wsBreathPhase = 0;
   wsRippleKey = -1;
   wsRippleAge = 0;
   wsCometPos  = 0;
@@ -236,9 +240,9 @@ static void wsDrawComet(uint8_t mode, uint16_t keyState) {
   } else {                               // 双色：头 = color2，尾 = 向 color1 过渡
     CRGB c1 = wsColor1(), c2 = wsColor2();
     head = c2;
-    tail[0] = wsDim(wsMix(c2, c1, 40), pgm_read_byte(&wsCometTrail[0]));
-    tail[1] = wsDim(wsMix(c2, c1, 100), pgm_read_byte(&wsCometTrail[1]));
-    tail[2] = wsDim(wsMix(c2, c1, 160), pgm_read_byte(&wsCometTrail[2]));
+    tail[0] = wsDim(wsMix(c2, c1, 110), pgm_read_byte(&wsCometTrail[0]));
+    tail[1] = wsDim(wsMix(c2, c1, 200), pgm_read_byte(&wsCometTrail[1]));
+    tail[2] = wsDim(c1, 26);                 // 尾巴末端 = 纯主色的微光
   }
 
   wsLeds[wsCometPos] = head;
@@ -281,13 +285,16 @@ static void wsDrawRipple(bool dual, uint16_t keyState) {
   CRGB c1 = wsColor1(), c2 = wsColor2();
   CRGB idle = dual ? wsDim(wsMix(c1, c2, 90), 22) : wsDim(c1, 22);   // 待机时一点点底光
 
+  //距离延迟和衰减时长都跟随 speed（1 → 78ms/格、1.75s；20 → 40ms/格、0.8s）
+  uint16_t delayMs = 80 - (uint16_t)ledParams.speed * 2;
+  uint16_t durMs   = 1800 - (uint16_t)ledParams.speed * 50;
+
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
     uint8_t level = 0;
     if (wsRippleKey >= 0) {
-      //age 是毫秒：波前按距离延迟 55ms/格，之后约 1.2s 衰减到 0
-      int16_t age = (int16_t)wsRippleAge - (int16_t)wsKeyDistance((uint8_t)wsRippleKey, i) * 55;
+      int16_t age = (int16_t)wsRippleAge - (int16_t)wsKeyDistance((uint8_t)wsRippleKey, i) * (int16_t)delayMs;
       if (age > 0) {
-        int16_t v = 255 - age / 5;
+        int16_t v = 255 - (int16_t)((uint32_t)age * 255 / durMs);
         if (v > 0) level = (uint8_t)v;
       }
     }
@@ -395,9 +402,10 @@ static void wsRainbowSparkle(uint16_t keyState) {
 // ---------------------------------------------------------------------------
 // 双色组
 // ---------------------------------------------------------------------------
+// 双色呼吸：相位自己累加，sin8 输出 0~255，端点连续（不会在周期结束突变）
 static void wsDualBreath() {
-  uint8_t t = beatsin8(6 + ledParams.speed * 3, 0, 255);
-  fill_solid(wsLeds, WS_LED_COUNT, wsMix(wsColor1(), wsColor2(), t));
+  fill_solid(wsLeds, WS_LED_COUNT, wsMix(wsColor1(), wsColor2(), sin8(wsBreathPhase)));
+  wsBreathPhase += wsScaleByDt(1 + (ledParams.speed >> 2));
 }
 
 static void wsDualPress(uint16_t keyState) {
@@ -406,23 +414,28 @@ static void wsDualPress(uint16_t keyState) {
     wsLeds[i] = ((keyState >> i) & 1) ? c2 : c1;
 }
 
-// 按下 = color2；松开后按时间渐回 color1（不再逐帧 blend(自己) 造成闪烁）
+/*
+  按下 = 副色；松开后该键的“副色余量”按时间衰减回 0。
+  背景（余量 0）永远是纯主色，亮度不会随余量变化，也不会污染别的键。
+*/
 static void wsDualPressFade(uint16_t keyState) {
   CRGB c1 = wsColor1(), c2 = wsColor2();
-  uint8_t mixStep = wsScaleByDt(5 + ledParams.speed);          // 每 20ms 6~25
+  uint8_t fade = wsScaleByDt(4 + ledParams.speed);       // 每 20ms 5~24
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    if ((keyState >> i) & 1) wsLeds[i] = c2;
-    else wsLeds[i] = wsMix(wsLeds[i], c1, mixStep);
+    if ((keyState >> i) & 1) wsGlow[i] = 255;
+    else wsGlow[i] = qsub8(wsGlow[i], fade);
+    wsLeds[i] = wsMix(c1, c2, wsGlow[i]);                // 0 = 纯主色
   }
 }
 
 static void wsDualWave() {
   CRGB c1 = wsColor1(), c2 = wsColor2();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    uint8_t t = sin8(wsPhase + wsKeyCol(i) * 60 + wsKeyRow(i) * 20);
+    //按列错开 85（一整圈的三分之一），行再错 30；sin8 直接输出 0~255
+    uint8_t t = sin8(wsPhase + wsKeyCol(i) * 85 + wsKeyRow(i) * 30);
     wsLeds[i] = wsMix(c1, c2, t);
   }
-  wsPhase += wsPhaseStep();
+  wsPhase += wsScaleByDt(2 + (ledParams.speed >> 1));
 }
 
 static void wsDualTyping(uint16_t keyState) {
@@ -438,7 +451,7 @@ static void wsDualTyping(uint16_t keyState) {
 static void wsDualGradient() {
   CRGB c1 = wsColor1(), c2 = wsColor2();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    uint8_t t = (uint8_t)((uint16_t)wsKeyCol(i) * 255 / (LED_KEY_COLS - 1));
+    uint8_t t = (uint8_t)((uint16_t)wsKeyCol(i) * 255 / (LED_KEY_COLS - 1));   // 0 / 127 / 255
     wsLeds[i] = wsMix(c1, c2, t);
   }
 }
