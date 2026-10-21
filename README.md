@@ -1,10 +1,10 @@
-# 6kb — 六键矮轴键盘（Arduino Leonardo）
+﻿# 6kb — 六键矮轴键盘（Arduino Leonardo）
 
 **中文** | [English](README.en.md)
 
 [![Platform](https://img.shields.io/badge/platform-Arduino%20Leonardo%20%2F%20ATmega32u4-00979D?logo=arduino&logoColor=white)](#硬件)
 [![Protocol](https://img.shields.io/badge/HID-Report%20ID%204%20%C2%B7%208%20bytes-6f42c1)](#协议速查)
-[![Firmware](https://img.shields.io/badge/firmware-1.05-blue)](#固件版本校验)
+[![Firmware](https://img.shields.io/badge/firmware-1.06-blue)](#固件版本校验)
 [![Host](https://img.shields.io/badge/host-KeyboardOG%20%E2%89%A5%201.07-2ea44f)](https://github.com/LGGZi/KeyBoard-OG-key-binding-tool)
 
 一把单手就能盖住的小键盘，最初是给 osu! 这类需要短键程、少按键的场景做的。
@@ -59,7 +59,7 @@
   | 字节 | 含义 |
   |---|---|
   | `[6]` | 这套固件**要求的上位机版本**（当前 `0x47` = 1.07） |
-  | `[7]` | 固件版本（当前 `0x45` = 1.05） |
+  | `[7]` | 固件版本（当前 `0x46` = 1.06） |
 
 - 上位机连上后立即比对：固件要求高于自身版本时，状态栏和日志提示升级，版本标签变红；
   固件侧同时维护“软件版本 ↔ 支持的固件范围”表，判断“固件过老 / 过新”。
@@ -139,6 +139,7 @@ arduino-cli upload  --fqbn arduino:avr:leonardo -p COM5 CODE/6kb
 │  ├─ EEPROMManager.h            EEPROM 布局与读写
 │  ├─ HIDcmdHandler.h            上位机指令 / 查询 / 设备信息
 │  ├─ LayoutManager.h            配列表 + 逐键上传
+│  ├─ tools/led_sim.py           本地虚拟灯带（改灯效前先跑）
 │  └─ README.md / README.en.md   固件结构说明（代码级文档）
 └─ HardwareAndShell/             Gerber / BOM / 外壳 / EasyEDA
 ```

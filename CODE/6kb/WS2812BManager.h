@@ -111,8 +111,8 @@ static uint16_t wsPrevKeys    = 0;
 static int8_t   wsRippleKey   = -1;
 static uint16_t wsRippleAge   = 0;              // 涟漪年龄（毫秒）
 
-// 彗星尾巴亮度（PROGMEM，占 3 字节 Flash）
-static const uint8_t wsCometTrail[3] PROGMEM = { 200, 70, 22 };
+// 彗星亮度-距离曲线（PROGMEM，4 个采样点：0/1/2/3 格）
+static const uint8_t wsCometCurve[4] PROGMEM = { 255, 140, 50, 0 };
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -150,7 +150,21 @@ static inline uint8_t wsFadeStep() {
   return (uint8_t)v;
 }
 
-static inline CRGB wsMix(CRGB a, CRGB b, uint8_t t) { return blend(a, b, t); }
+/*
+  精确线性插值：t=0 取 a，t=255 取 b。
+  不用 FastLED 的 blend()：AVR 上它走汇编实现，而且我们只需要“逐通道线性”这一种语义，
+  自己算既确定又快（除以 255 编译器会转成乘移位）。
+*/
+static inline uint8_t wsMix8(uint8_t a, uint8_t b, uint8_t t) {
+  if (t == 0)   return a;
+  if (t == 255) return b;
+  uint16_t inv = (uint16_t)(255 - t);
+  return (uint8_t)(((uint16_t)a * inv + (uint16_t)b * t + 127) / 255);
+}
+
+static inline CRGB wsMix(CRGB a, CRGB b, uint8_t t) {
+  return CRGB(wsMix8(a.r, b.r, t), wsMix8(a.g, b.g, t), wsMix8(a.b, b.b, t));
+}
 
 /*
   亮度乘一个系数（level=0 全黑，255 保持原亮度），不改色相。
@@ -244,49 +258,49 @@ void wsSetColor2RGB(uint8_t r, uint8_t g, uint8_t b) {
 // 每帧清空重画，头永远最亮，尾巴固定两格；走格按毫秒累计。
 // ---------------------------------------------------------------------------
 static void wsDrawComet(uint8_t mode, uint16_t keyState) {
-  fill_solid(wsLeds, WS_LED_COUNT, CRGB::Black);
-
-  CRGB head;
-  CRGB tail[3];
-  if (mode == 0) {                       // 单色
-    head = wsColor1();
-    tail[0] = wsDim(head, pgm_read_byte(&wsCometTrail[0]));
-    tail[1] = wsDim(head, pgm_read_byte(&wsCometTrail[1]));
-    tail[2] = wsDim(head, pgm_read_byte(&wsCometTrail[2]));
-  } else if (mode == 1) {                // 炫彩
-    head = CHSV(wsHue, 255, 255);
-    tail[0] = CHSV(wsHue + 8, 255, pgm_read_byte(&wsCometTrail[0]));
-    tail[1] = CHSV(wsHue + 16, 255, pgm_read_byte(&wsCometTrail[1]));
-    tail[2] = CHSV(wsHue + 24, 255, pgm_read_byte(&wsCometTrail[2]));
-  } else {                               // 双色：头 = color2，尾 = 向 color1 过渡
-    CRGB c1 = wsColor1(), c2 = wsColor2();
-    head = c2;
-    tail[0] = wsDim(wsMix(c2, c1, 110), pgm_read_byte(&wsCometTrail[0]));
-    tail[1] = wsDim(wsMix(c2, c1, 200), pgm_read_byte(&wsCometTrail[1]));
-    tail[2] = wsDim(c1, 26);                 // 尾巴末端 = 纯主色的微光
-  }
-
-  wsLeds[wsCometPos] = head;
-  for (uint8_t k = 1; k <= 2; k++) {
-    int8_t idx = (int8_t)wsCometPos - (int8_t)k;
-    if (idx < 0) idx += WS_LED_COUNT;
-    wsLeds[idx] = tail[k - 1];
-  }
-
-  // 按下的键保持头部颜色（按下时有反馈）
-  if (mode == 0) {
-    CRGB c = wsColor1();
-    for (uint8_t i = 0; i < WS_LED_COUNT; i++)
-      if ((keyState >> i) & 1) wsLeds[i] = c;
-  }
-
-  // 走格：速度 1~20 -> 每格 380~80ms
   uint16_t moveMs = 380 - (uint16_t)ledParams.speed * 15;
+
+  //位置按毫秒累计；frac 是"距离下一格还剩多少"（0~255），用来做跨格插值
   wsCometAcc += wsDt;
   while (wsCometAcc >= moveMs) {
     wsCometAcc -= moveMs;
     wsCometPos = (wsCometPos + 1) % WS_LED_COUNT;
   }
+  uint8_t frac = (uint8_t)((uint32_t)wsCometAcc * 255UL / moveMs);
+
+  CRGB c1 = wsColor1(), c2 = wsColor2();
+  int16_t head256 = (int16_t)wsCometPos * 256 + (int16_t)frac;
+
+  for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
+    //环形距离，单位 1/256 格
+    int16_t d = (int16_t)i * 256 - head256;
+    if (d < 0) d = -d;
+    if (d > (int16_t)(WS_LED_COUNT * 128)) d = (int16_t)(WS_LED_COUNT * 256) - d;
+
+    uint8_t level = 0;
+    if (d < 768) {
+      uint8_t seg = (uint8_t)(d >> 8);
+      uint8_t f8  = (uint8_t)(d & 0xFF);
+      uint8_t a = pgm_read_byte(&wsCometCurve[seg]);
+      uint8_t b = pgm_read_byte(&wsCometCurve[seg + 1]);
+      level = (uint8_t)((int16_t)a + (((int16_t)b - (int16_t)a) * (int16_t)f8) / 256);
+    }
+
+    if (mode == 0) {
+      wsLeds[i] = wsDim(c1, level);
+    } else if (mode == 1) {
+      wsLeds[i] = CHSV(wsHue + (uint8_t)(d >> 5), 255, level);
+    } else {
+      wsLeds[i] = wsMix(c1, c2, level);       // 头 = 副色，尾巴过渡回主色
+    }
+  }
+
+  //单色彗星：按下的键额外常亮
+  if (mode == 0) {
+    for (uint8_t i = 0; i < WS_LED_COUNT; i++)
+      if ((keyState >> i) & 1) wsLeds[i] = c1;
+  }
+
   wsHue += wsPhaseStep();
 }
 
@@ -321,7 +335,8 @@ static void wsDrawRipple(bool dual, uint16_t keyState) {
     }
     if (level > 0) wsLeds[i] = dual ? wsMix(c1, c2, level) : wsDim(c1, level);
     else           wsLeds[i] = idle;
-    if ((keyState >> i) & 1) wsLeds[i] = c1;
+    //单色涟漪保留"按住常亮"的反馈；双色涟漪不加，否则松手瞬间会从主色跳到副色
+    if (!dual && ((keyState >> i) & 1)) wsLeds[i] = c1;
   }
 
   if (wsRippleKey >= 0) {
@@ -352,12 +367,15 @@ static void wsPressFade(uint16_t keyState) {
   }
 }
 
+// 打字热度（单色）：按下累加热度，颜色 = 主色 × 热度；离开后慢慢冷却
 static void wsTypingHeat(uint16_t keyState) {
-  uint8_t cool = wsScaleByDt(1 + (ledParams.speed >> 1));
+  uint8_t hot  = wsScaleByDt(6 + ledParams.speed);          // 按住时每帧升温
+  uint8_t cool = wsScaleByDt(1 + (ledParams.speed >> 1));   // 松开后每帧降温
+  CRGB c = wsColor1();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    if ((keyState >> i) & 1) wsHeat[i] = 255;
+    if ((keyState >> i) & 1) wsHeat[i] = qadd8(wsHeat[i], hot);
     else wsHeat[i] = qsub8(wsHeat[i], cool);
-    wsLeds[i] = HeatColor(wsHeat[i]);
+    wsLeds[i] = wsDim(c, wsHeat[i]);
   }
 }
 
@@ -447,9 +465,10 @@ static void wsDualPressFade(uint16_t keyState) {
   CRGB c1 = wsColor1(), c2 = wsColor2();
   uint8_t fade = wsScaleByDt(4 + ledParams.speed);       // 每 20ms 5~24
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
+    //按下立刻满副色，松开后线性衰减；背景（余量 0）= 纯主色，亮度不变
     if ((keyState >> i) & 1) wsGlow[i] = 255;
     else wsGlow[i] = qsub8(wsGlow[i], fade);
-    wsLeds[i] = wsMix(c1, c2, wsGlow[i]);                // 0 = 纯主色
+    wsLeds[i] = wsMix(c1, c2, wsGlow[i]);
   }
 }
 
@@ -463,11 +482,17 @@ static void wsDualWave() {
   wsPhase += wsScaleByDt(2 + (ledParams.speed >> 1));
 }
 
+/*
+  双色打字：冷 = color2，热 = color1。
+  和"双色按下+渐回"的区别：这里是**累积**——每按一次加一截热度，越按越接近主色，
+  松手后慢慢冷却；按下渐变则是"按下立刻副色、松开线性回到主色"的一次性包络。
+*/
 static void wsDualTyping(uint16_t keyState) {
+  uint8_t hot  = wsScaleByDt(6 + ledParams.speed);
   uint8_t cool = wsScaleByDt(1 + (ledParams.speed >> 1));
   CRGB c1 = wsColor1(), c2 = wsColor2();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    if ((keyState >> i) & 1) wsHeat[i] = 255;
+    if ((keyState >> i) & 1) wsHeat[i] = qadd8(wsHeat[i], hot);
     else wsHeat[i] = qsub8(wsHeat[i], cool);
     wsLeds[i] = wsMix(c2, c1, wsHeat[i]);
   }

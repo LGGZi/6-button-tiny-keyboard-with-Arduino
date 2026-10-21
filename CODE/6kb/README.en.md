@@ -1,4 +1,4 @@
-# Six-key keyboard firmware (6kb)
+﻿# Six-key keyboard firmware (6kb)
 
 [中文](README.md) | **English**
 
@@ -9,7 +9,7 @@ explain *why* something is written that way; this file explains *how it works ov
 - MCU: ATmega32u4 (Arduino Leonardo core, `arduino:avr:leonardo`)
 - Keys: `BUTTONCOUNT = 6`, **plain mechanical switches** (digital input, pull-up, active low)
 - One WS2812B per key (data on D4, arranged as 2 rows × 3 columns)
-- Firmware version: `FIRMWARE_VERSION` in `Universal.h`, currently `0x45` = 1.05
+- Firmware version: `FIRMWARE_VERSION` in `Universal.h`, currently `0x46` = 1.06
 - Required host version: `HOST_VERSION_REQUIRED` in `Universal.h`, currently `0x47` = 1.07
 - Host protocol: Report ID **4**, 8-byte commands (used by the KeyboardOG host tool)
 
@@ -274,7 +274,7 @@ EEPROM.put(LED_PARAMS_START_POSITION, ledParams);
 | 1 | `LED_EFFECT_SOLID` | solid |
 | 2 | `LED_EFFECT_PRESS` | lit while pressed (default) |
 | 3 | `LED_EFFECT_PRESS_FADE` | press + afterglow |
-| 4 | `LED_EFFECT_TYPING_HEAT` | typing heat |
+| 4 | `LED_EFFECT_TYPING_HEAT` | typing heat (color1 dim to bright, heats while held) |
 | 5 | `LED_EFFECT_BREATH` | breathing |
 | 6 | `LED_EFFECT_WAVE` | wave |
 | 7 | `LED_EFFECT_SPARKLE` | sparkle |
@@ -300,7 +300,7 @@ EEPROM.put(LED_PARAMS_START_POSITION, ledParams);
 | 17 | `LED_EFFECT_DUAL_PRESS_FADE` | pressed = color2, that key decays back to color1 |
 | 18 | `LED_EFFECT_DUAL_WAVE` | dual wave (columns offset 85, rows 30) |
 | 19 | `LED_EFFECT_DUAL_COMET` | dual comet (head color2 → two tail steps → dim color1) |
-| 20 | `LED_EFFECT_DUAL_TYPING` | dual typing heat (cool color2 → hot color1) |
+| 20 | `LED_EFFECT_DUAL_TYPING` | dual typing heat: cool color2 → hot color1, **heats while held** (unlike press + fade) |
 | 21 | `LED_EFFECT_DUAL_GRADIENT` | left/right gradient (0 / 127 / 255) |
 | 22 | `LED_EFFECT_DUAL_RIPPLE` | dual ripple (delay and decay follow `speed`) |
 
@@ -311,6 +311,13 @@ Implementation rules for the dual group (these avoid the old flicker/colour jump
 - **No framebuffer feedback**: colours are computed from `color1/color2` and state only.
 - **Breath/wave use their own phase accumulators**, so the endpoints are continuous.
 - **Ripple** is single-shot: delay `80-2*speed` ms per cell, decay `1800-50*speed` ms.
+  The dual ripple no longer paints a held key with color1 (that made the release jump from
+  color1 to color2).
+- **Comet** advances its head by elapsed milliseconds and takes its brightness from a
+  0/1/2/3-cell distance curve, so the head never jumps a whole cell at a time.
+- **Both heat effects** ramp up in small per-frame steps (~0.3 s to full) instead of snapping
+  to full. The mono heat now uses the primary colour's brightness instead of `HeatColor()`
+  (which is black → red → yellow → white and ignores the configured colour).
 
 Ripple, rainbow, wave and gradient all use the 2×3 layout
 (`wsKeyCol / wsKeyRow / wsKeyDistance`), so directions follow the real key positions.
@@ -338,7 +345,28 @@ answers with two frames and then a FIN:
 Both frames echo the query sequence in `[7]`. Ten parameter bytes do not fit in one
 8-byte report, hence two frames.
 
-### 8.6 Performance and timing
+### 8.6 Local simulator (`tools/led_sim.py`)
+
+Run it before flashing to see what a change looks like:
+
+```bash
+python tools/led_sim.py --effect 18 --frames 60 --fps 50 --speed 8 \
+                        --color1 FE0107 --color2 00E6FF --out out
+python tools/led_sim.py --list          # list effect ids
+```
+
+| File | Content |
+|---|---|
+| `out/frames.png` | filmstrip (one frame per row, six LEDs) |
+| `out/timeline.csv` | per-frame per-LED RGB |
+| `out/report.txt` | continuity stats: max channel delta, where it jumps, colours before/after |
+
+A delta of 40 or less counts as smooth; effects with a moving front (ripple, comet) may step
+once when the front passes a cell; anything else reporting `JUMP` is a real colour jump.
+The simulator mirrors the firmware's integer maths (`wsMix8`, `wsScale`, timing, effect
+formulas) — keep both in sync.
+
+### 8.7 Performance and timing
 
 - One `FastLED.show()` per frame (~200 µs for 6 LEDs); FastLED's temporal dithering is off.
 - All integer maths: `sin8`, `HeatColor`, `scale8`, `blend` are table/assembly based.

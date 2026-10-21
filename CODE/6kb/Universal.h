@@ -3,7 +3,7 @@
 //在这里开启或关闭串口DEBUG
 #define DEBUG 0
 #define HOST_VERSION_REQUIRED 0x47   // 设备信息 [6]：这套固件要求的上位机版本（2|3|3 位）
-#define FIRMWARE_VERSION 0x45
+#define FIRMWARE_VERSION 0x46
 //编码器灵敏度vv
 //键鼠模式灵敏度vv 值为起转脉冲数
 #define TT_ACTIVE_COUNT 1

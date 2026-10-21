@@ -1,4 +1,4 @@
-# 六键键盘固件结构说明（6kb）
+﻿# 六键键盘固件结构说明（6kb）
 
 **中文** | [English](README.en.md)
 
@@ -8,7 +8,7 @@
 - 目标芯片：ATmega32u4（Arduino Leonardo 内核，`arduino:avr:leonardo`）
 - 按键数量：`BUTTONCOUNT = 6`，**普通机械轴**（数字输入，带上拉，低电平有效）
 - 每个键一颗 WS2812B 灯（数据脚 D4，2 行 × 3 列）
-- 固件版本：`FIRMWARE_VERSION`（`Universal.h`，当前 `0x45` = 1.05）
+- 固件版本：`FIRMWARE_VERSION`（`Universal.h`，当前 `0x46` = 1.06）
 - 要求的上位机版本：`HOST_VERSION_REQUIRED`（`Universal.h`，当前 `0x47` = 1.07）
 - 上位机协议：Report ID **4**，8 字节指令（与 KeyboardOG 上位机配套）
 
@@ -266,7 +266,7 @@ EEPROM.put(LED_PARAMS_START_POSITION, ledParams);
 | 1 | `LED_EFFECT_SOLID` | 常亮 |
 | 2 | `LED_EFFECT_PRESS` | 按下即亮（默认） |
 | 3 | `LED_EFFECT_PRESS_FADE` | 按下 + 松开余辉 |
-| 4 | `LED_EFFECT_TYPING_HEAT` | 打字热度 |
+| 4 | `LED_EFFECT_TYPING_HEAT` | 打字热度（主色由暗到亮，按住持续升温） |
 | 5 | `LED_EFFECT_BREATH` | 呼吸 |
 | 6 | `LED_EFFECT_WAVE` | 波浪 |
 | 7 | `LED_EFFECT_SPARKLE` | 星光 |
@@ -292,7 +292,7 @@ EEPROM.put(LED_PARAMS_START_POSITION, ledParams);
 | 17 | `LED_EFFECT_DUAL_PRESS_FADE` | 按下 = 副色；松开后**该键**的余量衰减回 0，背景恒为主色 |
 | 18 | `LED_EFFECT_DUAL_WAVE` | 双色波浪（列错相 85、行错相 30） |
 | 19 | `LED_EFFECT_DUAL_COMET` | 双色跑马（头副色 → 尾两格过渡 → 末端纯主色微光） |
-| 20 | `LED_EFFECT_DUAL_TYPING` | 双色打字热度（冷副色 → 热主色，直接由热度算色） |
+| 20 | `LED_EFFECT_DUAL_TYPING` | 双色打字热度：冷副色 → 热主色，**按住持续升温**（与“按下+渐回”不同） |
 | 21 | `LED_EFFECT_DUAL_GRADIENT` | 左右渐变（0 / 127 / 255 三段取满） |
 | 22 | `LED_EFFECT_DUAL_RIPPLE` | 双色涟漪（延迟与衰减都跟随 speed） |
 
@@ -301,7 +301,12 @@ EEPROM.put(LED_PARAMS_START_POSITION, ledParams);
 - **背景颜色只由 `color1` 决定**：按下类效果用每键独立的 `wsGlow[]` 记录“副色余量”；
 - **不用帧缓冲回溯**：颜色都由 `color1/color2` 和状态量直接算，不会“从中间色再混一次”；
 - **呼吸/波浪用自己累加的相位**，端点连续；
-- **涟漪**：单次触发，延迟 `80-2×speed` ms/格，衰减 `1800-50×speed` ms。
+- **涟漪**：单次触发，延迟 `80-2×speed` ms/格，衰减 `1800-50×speed` ms；
+  双色涟漪不会把按住的键刷成主色（否则松手瞬间会从主色跳到副色）。
+- **彗星（跑马）**：头的位置按毫秒连续推进，亮度按“0/1/2/3 格”的距离曲线插值，
+  所以不会整格跳动；旧写法是每帧清空重画 + 整格移动，头会在格与格之间"闪现"。
+- **两种热度**都用**每帧小步**累加（约 0.3s 到满），不是按一下直接跳到满值；
+  单色热度用主色的明暗，不再用 `HeatColor()`（那个是黑→红→黄→白，和设置的颜色无关）。
 
 涟漪、彩虹、波浪、渐变都用 2×3 的物理排布（`wsKeyCol / wsKeyRow / wsKeyDistance`），
 扩散方向和色相按真实位置走。
@@ -326,7 +331,29 @@ EEPROM.put(LED_PARAMS_START_POSITION, ledParams);
 
 两帧的 `[7]` 都是查询指令的序号；10 个参数字节一帧装不下（报文只有 8 字节），所以拆成两帧。
 
-### 8.6 性能与时序
+### 8.6 本地模拟器（`tools/led_sim.py`）
+
+改灯效前建议先用它跑一遍，不用烧录：
+
+```bash
+python tools/led_sim.py --effect 18 --frames 60 --fps 50 --speed 8 \
+                        --color1 FE0107 --color2 00E6FF --out out
+python tools/led_sim.py --list          # 列出效果编号
+```
+
+输出：
+
+| 文件 | 内容 |
+|---|---|
+| `out/frames.png` | 胶片图（每行一帧、6 颗灯），肉眼看渐变 |
+| `out/timeline.csv` | 每帧每颗灯的 RGB，方便贴进表格分析 |
+| `out/report.txt` | 连续性统计：相邻帧最大通道变化、跳变位置与前后颜色 |
+
+判定规则：`<= 40` 算平滑；涟漪 / 彗星这类有“波前”的效果允许波前扫过时的一帧跳变；
+其余效果报 `JUMP` 就是真的有跳色。模拟器复刻的是固件里的整数数学
+（`wsMix8` / `wsScale` / 时间步进 / 各效果更新公式），改公式时要同步改它。
+
+### 8.7 性能与时序
 
 - 每帧只 `FastLED.show()` 一次（6 颗灯约 200µs），关掉了 FastLED 的时域抖动；
 - 全部整数运算：`sin8` / `HeatColor` / `scale8` / `blend` 都是查表或汇编实现，没有浮点；

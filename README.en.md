@@ -4,7 +4,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Arduino%20Leonardo%20%2F%20ATmega32u4-00979D?logo=arduino&logoColor=white)](#hardware)
 [![Protocol](https://img.shields.io/badge/HID-Report%20ID%204%20%C2%B7%208%20bytes-6f42c1)](#protocol-at-a-glance)
-[![Firmware](https://img.shields.io/badge/firmware-1.05-blue)](#firmware-version-check)
+[![Firmware](https://img.shields.io/badge/firmware-1.06-blue)](#firmware-version-check)
 [![Host](https://img.shields.io/badge/host-KeyboardOG%20%E2%89%A5%201.07-2ea44f)](https://github.com/LGGZi/KeyBoard-OG-key-binding-tool)
 
 A tiny keyboard that fits under one hand, originally built for osu!-style games that want
@@ -67,7 +67,7 @@ host ──(HID Report ID 4, 8-byte commands)──> firmware
   | Byte | Meaning |
   |---|---|
   | `[6]` | host version this firmware expects (currently `0x47` = 1.07) |
-  | `[7]` | firmware version (currently `0x45` = 1.05) |
+  | `[7]` | firmware version (currently `0x46` = 1.06) |
 
 - The host compares them on connect: if the firmware expects a newer host, the status bar and
   log say so and the version label turns red. The host also keeps a
@@ -149,6 +149,7 @@ Current footprint: ~16.2 KB flash of 28 KB, ~640 B RAM of 2.5 KB.
 │  ├─ EEPROMManager.h           EEPROM layout and access
 │  ├─ HIDcmdHandler.h           host commands / queries / device info
 │  ├─ LayoutManager.h           layout table + per-key upload
+│  ├─ tools/led_sim.py          local strip simulator (run before tweaking effects)
 │  └─ README.md / README.en.md  firmware documentation (code level)
 └─ HardwareAndShell/            Gerber / BOM / shell / EasyEDA
 ```
