@@ -194,8 +194,7 @@ arduino-cli upload  --fqbn arduino:avr:leonardo -p COM5 CODE/6kb
 
 **Q：能改成 9 键吗**
 
-- `buttonPins[]` 预留了 9 项（`1, MISO, SCK`），但 D1 是串口 TX，需要先确认板子空出这些脚。
-- 又或者干脆自己修改代码，修改引脚定义，改变BUTTONCOUNT等宏定义然后自己将getKeyState()修改（扫描按键的函数，去抖也应在内，返回二进制按键按下状态），这样就可以适配不同按键数的键盘。
+- 自己修改代码，修改引脚定义，改变BUTTONCOUNT等宏定义然后自己将getKeyState()修改（扫描按键的函数，去抖也应在内，返回二进制按键按下状态），这样就可以适配不同按键数的键盘。
 - 此外还建议去上位机代码中tool文件夹下找将标准KLE json文件转换为我定义的layout数组的小工具，将你的配列转换为数组并替换layout文件内的数组，这样上位机就可以绘制出你的配列的图像。
 ---
 
@@ -213,4 +212,4 @@ arduino-cli upload  --fqbn arduino:avr:leonardo -p COM5 CODE/6kb
 - HID 复合描述符基于 Arduino 官方的 `Keyboard` / `HID` 示例改写。
 - 感谢在真机上反复验证映射、灯效、保存与版本协议的过程中提供的反馈。
 
-> 本仓库未附带开源许可证；如需以 MIT / Apache-2.0 等方式开源，请在根目录添加 `LICENSE` 文件。
+
