@@ -1,4 +1,4 @@
-# 6kb — six-key low-profile keyboard (Arduino Leonardo)
+﻿# 6kb — six-key low-profile keyboard (Arduino Leonardo)
 
 [中文](README.md) | **English**
 
@@ -18,7 +18,7 @@ host ──(HID Report ID 4, 8-byte commands)──> firmware
      <─(ACK / FIN / query data / device info)─
 ```
 
-> **No keys are bound by default** — write your mappings with the host tool first.
+> **No keys are bound by default** — write your mappings with the host tool before first use.
 
 ---
 
@@ -29,7 +29,7 @@ host ──(HID Report ID 4, 8-byte commands)──> firmware
 - 6 low-profile switches in 2 rows × 3 columns (`0 1 2` / `3 4 5`); digital inputs with
   internal pull-ups, pressed = low.
 - **Press is immediate**; a release needs `release_debounce` ms of continuous release.
-  The value lives in EEPROM byte 0, range 1..20 ms (default 1).
+  The value lives in EEPROM byte 0, range 1-20 ms (default 1).
 - The state bitmap is **latched**: bits change only on transitions, so a key resting between
   thresholds never loses its state.
 
@@ -42,7 +42,7 @@ host ──(HID Report ID 4, 8-byte commands)──> firmware
     rainbow comet
   - **dual colour**: dual breath / dual press / dual press + fade / dual wave / dual comet /
     dual typing / left-right gradient / dual ripple
-- Adjustable: **brightness 0..255, speed 1..20, frame rate 10..200 fps, primary and secondary
+- Adjustable: **brightness 0-255, speed 1-20, frame rate 10-200 fps, primary and secondary
   colour**; the whole parameter block is stored in EEPROM.
 - Ripple / rainbow / wave / gradient use the real **2 × 3 layout** to decide direction.
 - Everything can be tuned live from the host; pressing "Save LED" persists it.
@@ -171,10 +171,11 @@ incrementing host sequence (the firmware drops a command identical to the previo
 | save LED | 0x0A | `[1]=0x5A` confirm |
 | frame rate | 0x0B | `[1]=fps (10..200)` |
 
-Three things that bite most often:
+Command conventions:
 
 1. **One command, two replies**: ACK then FIN; reading only one leaves the FIN for the next command.
-2. **The device-info frame has no FIN**: end the query when the `0xFF` frame arrives.
+2. **The device-info frame has no FIN**: end the query when the `0xFF` frame arrives — a
+   device-info reply itself carries no FIN.
 3. **The firmware drops duplicate commands**: increment `[7]` every time.
 
 Full byte layouts, reply formats and the EEPROM map are in
@@ -187,13 +188,13 @@ Full byte layouts, reply formats and the EEPROM map are in
 **Q: nothing happens after flashing**
 
 - No bindings exist by default; write mappings with the host tool first.
-- Make sure the board is set to **Arduino Leonardo** (not Micro / Pro Micro).
+- Make sure the board is set to **Arduino Leonardo** (not Micro / Pro Micro); the host filters
+  candidate devices by VID/PID.
 
 **Q: the host reports a 3000 ms timeout right after connecting**
 
 - The device-info frame has no FIN; the host must end the query on the `0xFF` frame. Use a
   matching host version.
-- Do not keep the Arduino serial monitor open.
 
 **Q: LED settings revert after replugging**
 
@@ -208,8 +209,11 @@ Full byte layouts, reply formats and the EEPROM map are in
 
 **Q: can this become a 9-key board?**
 
-- `buttonPins[]` already lists nine pins (`1, MISO, SCK`), but D1 is the serial TX pin — verify
-  those pins are actually free on your board.
+- Change the macros yourself (`BUTTONCOUNT`, the pin table, `key_map` sizes) and adapt
+  `getKeyState()` — the scan/debounce function that returns the pressed-bit bitmap — to your
+  key count.
+- Also convert your layout with the KLE → layout-array tool in the host's `tools/` folder and
+  replace the array in the layout file, so the host can draw your layout instead of a plain grid.
 
 ---
 
@@ -228,5 +232,3 @@ Full byte layouts, reply formats and the EEPROM map are in
 - Thanks to everyone who kept testing mappings, LED effects, persistence and the version
   handshake on real hardware.
 
-> This repository has no open-source license yet; add a `LICENSE` file (MIT / Apache-2.0 …)
-> if you want to publish it as open source.
