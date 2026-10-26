@@ -379,10 +379,17 @@ static void wsTypingHeat(uint16_t keyState) {
   }
 }
 
+// 三角波 0 -> 255 -> 0（端点连续，替代 beatsin8 内部的 millis 计时）
+static inline uint8_t wsTriangle(uint8_t p) {
+  return (p < 128) ? (uint8_t)(p * 2) : (uint8_t)((255 - p) * 2);
+}
+
 static void wsBreath() {
-  uint8_t level = beatsin8(6 + ledParams.speed * 3, 16, 255);
+  uint8_t t = wsTriangle(wsBreathPhase);
+  uint8_t level = (uint8_t)(16 + (uint16_t)t * 239 / 255);      // 16~255
   fill_solid(wsLeds, WS_LED_COUNT, wsColor1());
   nscale8(wsLeds, WS_LED_COUNT, level);
+  wsBreathPhase += wsScaleByDt(1 + (ledParams.speed >> 2));
 }
 
 static void wsWave() {
@@ -412,9 +419,11 @@ static void wsRainbow() {
 }
 
 static void wsRainbowBreath() {
-  uint8_t level = beatsin8(6 + ledParams.speed * 3, 20, 255);
+  uint8_t t = wsTriangle(wsBreathPhase);
+  uint8_t level = (uint8_t)(20 + (uint16_t)t * 235 / 255);      // 20~255
   for (uint8_t i = 0; i < WS_LED_COUNT; i++)
     wsLeds[i] = CHSV(wsHue + wsKeyCol(i) * 30 + wsKeyRow(i) * 60, 255, level);
+  wsBreathPhase += wsScaleByDt(1 + (ledParams.speed >> 2));
   wsHue += wsPhaseStep();
 }
 
@@ -445,8 +454,7 @@ static void wsRainbowSparkle(uint16_t keyState) {
   不依赖 sin 表的偏移/量化，也就不会在周期交界出现“闪一下别的颜色”。
 */
 static void wsDualBreath() {
-  uint8_t t = (wsBreathPhase < 128) ? (uint8_t)(wsBreathPhase * 2)
-                                    : (uint8_t)((255 - wsBreathPhase) * 2);
+  uint8_t t = wsTriangle(wsBreathPhase);
   fill_solid(wsLeds, WS_LED_COUNT, wsMix(wsColor1(), wsColor2(), t));
   wsBreathPhase += wsScaleByDt(1 + (ledParams.speed >> 2));
 }
@@ -510,7 +518,7 @@ static void wsDualGradient() {
 // 主刷新
 // ---------------------------------------------------------------------------
 void wsTick(uint16_t keyState) {
-  uint32_t now = millis();
+  uint32_t now = getFrameTime();
   uint32_t dtRaw = now - wsLastFrameMs;
 
   // 还没到刷新间隔

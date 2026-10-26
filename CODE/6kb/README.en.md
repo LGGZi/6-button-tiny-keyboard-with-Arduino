@@ -71,6 +71,24 @@ delayMicroseconds(500);       // main-loop tick
 - LED refresh is decoupled from the loop: `wsTick()` is limited to `ledParams.fps`
   (default 50 fps) internally, while the main loop runs at roughly 500 µs.
 
+### 3.1 Time base (`frame_time`)
+
+`millis()` is not a variable read: every call briefly disables interrupts, reads `TCNT0`
+plus the overflow counter, and multiple calls within one frame can even straddle a timer
+tick. All timing therefore goes through `Universal.h`:
+
+```c
+static uint32_t frame_time = 0;
+static inline void frameTimeUpdate() { frame_time = millis(); }   // read once per frame
+static inline uint32_t getFrameTime() { return frame_time; }      // everyone else reads this
+```
+
+- the **first statement** of `loop()` is `frameTimeUpdate();`
+- key debounce (`KeyManager.h`) and LED frame pacing (`WS2812BManager.h`) use `getFrameTime()`
+- breathing effects no longer use `beatsin8()` (FastLED calls `millis()` inside); they
+  accumulate their own phase and use a triangle wave
+- `millis()` appears exactly once in the whole project, inside `frameTimeUpdate()`
+
 ---
 
 ## 4. Key scan and debounce (`KeyManager.h`)

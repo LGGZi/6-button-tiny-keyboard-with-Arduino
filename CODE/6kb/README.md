@@ -65,6 +65,22 @@ delayMicroseconds(500);       // 主循环节拍
 - `lyAxis = -128` 是历史行为（原来手柄模式下摇杆中位），删掉会让系统认为左摇杆一直偏上；
 - 灯效刷新率和主循环解耦：主循环约 500µs 一轮，`wsTick()` 内部按 `fps` 限速（默认 50fps）。
 
+### 3.1 时间基准（`frame_time`）
+
+`millis()` 每次调用都要短暂关中断、读 `TCNT0` 和溢出计数；同一帧里调多次还可能跨过计时器节拍，
+导致同一帧内的判断用了不同基准。所以所有时间统一走 `Universal.h`：
+
+```c
+static uint32_t frame_time = 0;
+static inline void frameTimeUpdate() { frame_time = millis(); }   // 每帧只在这里读一次
+static inline uint32_t getFrameTime() { return frame_time; }      // 其它地方只读缓存
+```
+
+- `loop()` 的**第一条语句**就是 `frameTimeUpdate();`
+- 按键去抖（`KeyManager.h`）和灯效帧调度（`WS2812BManager.h`）都改用 `getFrameTime()`
+- 呼吸效果不再用 `beatsin8()`（FastLED 内部会调 `millis()`），改成自己累加相位的三角波
+- 全项目 `millis()` 只出现在 `frameTimeUpdate()` 里
+
 ---
 
 ## 4. 按键扫描与去抖（`KeyManager.h`）

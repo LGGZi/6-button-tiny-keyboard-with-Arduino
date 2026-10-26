@@ -4,6 +4,27 @@
 #define DEBUG 0
 #define HOST_VERSION_REQUIRED 0x47   // 设备信息 [6]：这套固件要求的上位机版本（2|3|3 位）
 #define FIRMWARE_VERSION 0x46
+
+/*-----------------------------------------------------------------------------
+  统一时间基准
+  ---------------------------------------------------------------------------
+  millis() 不是"读一个变量"：每次调用都要短暂关中断、读 TCNT0 和溢出计数，
+  再算成毫秒；同一帧里调用多次还可能跨过计时器节拍，导致同一帧内的时序判断
+  用了不同基准。
+
+  这里的做法是：loop() 开头调用一次 frameTimeUpdate() 把时间抓进 frame_time，
+  其它所有代码只通过 getFrameTime() 读这个缓存值。
+  这样每帧只读一次硬件计时器，帧内的所有判断都基于同一个时间戳。
+-----------------------------------------------------------------------------*/
+static uint32_t frame_time = 0;
+
+static inline void frameTimeUpdate() {
+  frame_time = millis();
+}
+
+static inline uint32_t getFrameTime() {
+  return frame_time;
+}
 //编码器灵敏度vv
 //键鼠模式灵敏度vv 值为起转脉冲数
 #define TT_ACTIVE_COUNT 1

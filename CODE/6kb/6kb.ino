@@ -33,6 +33,8 @@ void setup() {
 }
 
 void loop() {
+  //每帧只在这里读一次 millis()，其它地方都用 getFrameTime()
+  frameTimeUpdate();
   static uint16_t buttonbuf = 0;
   buttonbuf = getKeyState();
   //清空报文后按映射表填报文（原来这里是用写死的键值直接填，现在改成走按键映射）

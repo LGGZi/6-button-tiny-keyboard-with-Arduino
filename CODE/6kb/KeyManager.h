@@ -1,4 +1,4 @@
-#ifndef KeyManager_h
+﻿#ifndef KeyManager_h
 #define KeyManager_h
 
 #include "Universal.h"
@@ -63,14 +63,14 @@ uint16_t getKeyState(){
   //按键扫描：返回"哪几个键被按下了"的位图（bit0 = 按键0）
   //去抖原理为按下时立刻算按下，抬起则要连续 release_debounce 毫秒都检测到抬起才确认抬起
   //（release_debounce 是单独的变量，默认 1ms，和原来的行为一致）
-  time_Now = millis();
+  time_Now = getFrameTime();
   for(int i=0;i<BUTTONCOUNT;i++){
     if(digitalRead(buttonPins[i])==HIGH){
       buttonbuf &= ~((uint16_t)1 << i);
 
     }else{
       buttonbuf |= (uint16_t)1 << i;
-      time_Pre[i] = millis();
+      time_Pre[i] = getFrameTime();
     }
   }
   for(int i=0;i<BUTTONCOUNT;i++){
