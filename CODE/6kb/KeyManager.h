@@ -2,87 +2,94 @@
 #define KeyManager_h
 
 #include "Universal.h"
+#include "KeyBehaviorManager.h"
 
-#define DEVICE 0
-#define KEYOFFSET 1
+
 //report 这个全局变量在 Universal.h 里声明（和磁轴键盘不同，那边是在这里声明的）
-static unsigned long time_Now = 0;
-static unsigned long time_Pre[BUTTONCOUNT] = {0};
-static uint16_t key_trigger_state = 0;
+static unsigned long time_Now = 0;   // 本帧时间戳（调试用；逻辑判断请直接读 keys[]）
 
 void reportBufferClear(){
   memset(&report, 0, sizeof(report));
 }
+
+
+void keyOperation_stickyKey(){
+  stickyKeyBehavior();
+}
 //按键映射的执行部分：把"哪几个物理键被按下了"翻译成 HID 报文内容
-//keyTriggerState 每一位对应一个物理按键（bit0 = 按键0），由各输入方式自己扫描得到
-void keyOperation(uint16_t keyTriggerState){
-  for(int i = 0; i < BUTTONCOUNT; i++){
-    if((keyTriggerState >> i) & 1){
-      for(uint8_t key_map_addr = 0; key_map_addr < MAXIMUM_BINDABLE_KEY; key_map_addr++){
-        uint8_t device = key_map[i][key_map_addr][DEVICE];
-        if(device == NO_DEVICE){
-          break;   //空槽：本按键的映射到此为止
+void keyOperation(){
+  for(uint8_t i = 0; i < BUTTONCOUNT; i++){
+    if(keyDown(i)){
+      //遍历此按键的槽，直到遇到DEVICE为0
+      for (uint8_t key_map_addr = 0; key_map_addr < MAX_BINDINGS_PER_KEY; key_map_addr++) {
+        uint8_t device = key_map[i][key_map_addr][DEVICE] & 0x0F;
+        uint8_t behavior = (key_map[i][key_map_addr][DEVICE] & 0xF0) >> 4;
+        uint8_t offset = key_map[i][key_map_addr][KEYOFFSET];
+        if (key_map[i][key_map_addr][DEVICE] == NO_DEVICE) {
+          break;  //空槽：本按键的映射到此为止
         }
-        #if DEBUG
-          Serial.print("输出手柄");
-          Serial.print("  offset=");
-          Serial.println(key_map[i][key_map_addr][KEYOFFSET]);
-        #endif
-        switch(device){
-          case KEYBOARD:{
-            uint8_t high_bits = (key_map[i][key_map_addr][KEYOFFSET] >> 4) & 0x0F;
-            uint8_t low_bits = key_map[i][key_map_addr][KEYOFFSET] & 0x0F;
-            if(high_bits < 14){
-              report.keyboardKeys[high_bits] |= ((uint8_t)1 << low_bits);
+        if(behavior == 0) {
+          //behavior为0则为常规按键
+          keyCodeWrite(device, offset);
+          continue;
+        }else{
+          //否则，有特殊功能，
+          switch (behavior){
+            case STICKY:
+            {
+              if(device == TOGGLE){
+                if(keyDownEdge(i)){
+                  stickyKeyBehavior_toggle();
+                }
+              }
+              if(device == 0x0E){
+                if(keyDownEdge(i)){
+                  stickyKeyBehavior_stateSwitch(i);
+                }
+              }
+            break;
             }
-            break;
+            case RAPID_TAB:
+            {
+              if(device == TOGGLE){
+                if(keyDownEdge(i)){
+                  rapidTabBehavior_toggle();
+                }
+              }else{
+                rapidTabBehavior(i, device, offset);
+              }
+              break;
+            }
           }
-          case CONTROLLER:{
-            report.xboxButtons |= (uint8_t)1 << key_map[i][key_map_addr][KEYOFFSET];
-            break;
-          }
-          case MOUSE:{
-            report.mouseButtons |= (uint8_t)1 << key_map[i][key_map_addr][KEYOFFSET];
-            break;
-          }
-          case MULTIMEDIA:{
-            report.mediaButtons |= (uint8_t)1 << key_map[i][key_map_addr][KEYOFFSET];
-            break;
-          }
-          default:
-            break;   //损坏 / 未知的 device：跳过这一个槽继续处理后面的，
-          
         }
       }
     }
   }
 }
 
-uint16_t getKeyState(){
-  static uint16_t buttonbuf = 0;
-  //按键扫描：返回"哪几个键被按下了"的位图（bit0 = 按键0）
-  //去抖原理为按下时立刻算按下，抬起则要连续 release_debounce 毫秒都检测到抬起才确认抬起
-  //（release_debounce 是单独的变量，默认 1ms，和原来的行为一致）
+/*
+  扫描 + 去抖：结果写进 keys[]（每键一个结构体）。
+    · 按下立即生效（raw=1 当帧就 down=1）
+    · 抬起要连续 release_debounce 毫秒都检测到抬起才确认
+  keys[i].pressedAt 记录最近一次按下的时间，抬起去抖/长按/连发都用它。
+*/
+void updateKeyState(){
+  static uint8_t pre_button_state[BUTTONCOUNT] = {0};
   time_Now = getFrameTime();
-  for(int i=0;i<BUTTONCOUNT;i++){
-    if(digitalRead(buttonPins[i])==HIGH){
-      buttonbuf &= ~((uint16_t)1 << i);
+  for(uint8_t i = 0; i < BUTTONCOUNT; i++){
+    uint8_t pressed = (digitalRead(buttonPins[i]) == LOW) ? 1 : 0;
+    keys[i].raw = pressed;
 
-    }else{
-      buttonbuf |= (uint16_t)1 << i;
-      time_Pre[i] = getFrameTime();
+    if(pressed){
+      keys[i].pressedAt = time_Now;
+      keys[i].down = 1;                       //按下立即生效
+      if(pre_button_state[i] == 0){ keys[i].down_edge = 1; }else{keys[i].down_edge = 0;}
+    } else if((uint32_t)(time_Now - keys[i].pressedAt) >= release_debounce){
+      keys[i].down = 0;                       //抬起要等够去抖时间
+      keys[i].down_edge = 0;
     }
+    pre_button_state[i] = keys[i].down;
   }
-  for(int i=0;i<BUTTONCOUNT;i++){
-    if((buttonbuf >> i) & 1){
-      key_trigger_state |= (uint16_t)1 << i;
-    } else if(time_Now - time_Pre[i] >= release_debounce){
-      key_trigger_state &= ~((uint16_t)1 << i);
-    }
-  }
-  return key_trigger_state;
 }
-
-
 
 #endif

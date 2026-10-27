@@ -107,7 +107,7 @@ static uint8_t  wsGlow[WS_LED_COUNT];            // 双色按下后的副色余�
 static uint8_t  wsBreathPhase = 0;               // 双色呼吸相位（0~255 循环）
 static uint8_t  wsCometPos    = 0;
 static uint16_t wsCometAcc    = 0;              // 彗星走格累计毫秒
-static uint16_t wsPrevKeys    = 0;
+static uint8_t  wsPrevDown[WS_LED_COUNT];   // 上一帧每颗灯对应按键的按下状态（找松开边沿）
 static int8_t   wsRippleKey   = -1;
 static uint16_t wsRippleAge   = 0;              // 涟漪年龄（毫秒）
 
@@ -205,7 +205,7 @@ void wsInit() {
   FastLED.setDither(DISABLE_DITHER);
   FastLED.clear(true);
   memset(wsHeat, 0, sizeof(wsHeat));
-  wsPrevKeys  = 0;
+  for (uint8_t i = 0; i < WS_LED_COUNT; i++) wsPrevDown[i] = 0;
   wsRippleKey = -1;
   wsRippleAge = 0;
   wsCometPos  = 0;
@@ -257,7 +257,7 @@ void wsSetColor2RGB(uint8_t r, uint8_t g, uint8_t b) {
 // 彗星（单色 / 炫彩 / 双色共用）
 // 每帧清空重画，头永远最亮，尾巴固定两格；走格按毫秒累计。
 // ---------------------------------------------------------------------------
-static void wsDrawComet(uint8_t mode, uint16_t keyState) {
+static void wsDrawComet(uint8_t mode) {
   uint16_t moveMs = 380 - (uint16_t)ledParams.speed * 15;
 
   //位置按毫秒累计；frac 是"距离下一格还剩多少"（0~255），用来做跨格插值
@@ -298,7 +298,7 @@ static void wsDrawComet(uint8_t mode, uint16_t keyState) {
   //单色彗星：按下的键额外常亮
   if (mode == 0) {
     for (uint8_t i = 0; i < WS_LED_COUNT; i++)
-      if ((keyState >> i) & 1) wsLeds[i] = c1;
+      if (keyDown(i)) wsLeds[i] = c1;
   }
 
   wsHue += wsPhaseStep();
@@ -309,11 +309,11 @@ static void wsDrawComet(uint8_t mode, uint16_t keyState) {
 // 只做一次：松手那一帧启动，波前按物理距离延迟到达，亮度只和"年龄-距离"有关。
 // 一次涟漪结束前不会再次触发（防止按键抖动造成来回闪）。
 // ---------------------------------------------------------------------------
-static void wsDrawRipple(bool dual, uint16_t keyState) {
+static void wsDrawRipple(bool dual) {
+  //找松开边沿：上一帧按下、这一帧松开
   if (wsRippleKey < 0) {
-    uint16_t released = wsPrevKeys & ~keyState;
-    for (int8_t i = WS_LED_COUNT - 1; i >= 0; i--) {
-      if ((released >> i) & 1) { wsRippleKey = i; wsRippleAge = 0; break; }
+    for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
+      if (wsPrevDown[i] && !keyDown(i)) { wsRippleKey = i; wsRippleAge = 0; break; }
     }
   }
 
@@ -336,7 +336,7 @@ static void wsDrawRipple(bool dual, uint16_t keyState) {
     if (level > 0) wsLeds[i] = dual ? wsMix(c1, c2, level) : wsDim(c1, level);
     else           wsLeds[i] = idle;
     //单色涟漪保留"按住常亮"的反馈；双色涟漪不加，否则松手瞬间会从主色跳到副色
-    if (!dual && ((keyState >> i) & 1)) wsLeds[i] = c1;
+    if (!dual && keyDown(i)) wsLeds[i] = c1;
   }
 
   if (wsRippleKey >= 0) {
@@ -352,28 +352,28 @@ static void wsOff() { fill_solid(wsLeds, WS_LED_COUNT, CRGB::Black); }
 
 static void wsSolid() { fill_solid(wsLeds, WS_LED_COUNT, wsColor1()); }
 
-static void wsPress(uint16_t keyState) {
+static void wsPress() {
   CRGB c = wsColor1();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++)
-    wsLeds[i] = ((keyState >> i) & 1) ? c : CRGB::Black;
+    wsLeds[i] = keyDown(i) ? c : CRGB::Black;
 }
 
-static void wsPressFade(uint16_t keyState) {
+static void wsPressFade() {
   CRGB c = wsColor1();
   uint8_t fadeBy = wsFadeStep();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    if ((keyState >> i) & 1) wsLeds[i] = c;
+    if (keyDown(i)) wsLeds[i] = c;
     else wsLeds[i] = wsDim(wsLeds[i], 255 - fadeBy);
   }
 }
 
 // 打字热度（单色）：按下累加热度，颜色 = 主色 × 热度；离开后慢慢冷却
-static void wsTypingHeat(uint16_t keyState) {
+static void wsTypingHeat() {
   uint8_t hot  = wsScaleByDt(6 + ledParams.speed);          // 按住时每帧升温
   uint8_t cool = wsScaleByDt(1 + (ledParams.speed >> 1));   // 松开后每帧降温
   CRGB c = wsColor1();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    if ((keyState >> i) & 1) wsHeat[i] = qadd8(wsHeat[i], hot);
+    if (keyDown(i)) wsHeat[i] = qadd8(wsHeat[i], hot);
     else wsHeat[i] = qsub8(wsHeat[i], cool);
     wsLeds[i] = wsDim(c, wsHeat[i]);
   }
@@ -400,13 +400,13 @@ static void wsWave() {
   wsPhase += wsPhaseStep();
 }
 
-static void wsSparkle(uint16_t keyState) {
+static void wsSparkle() {
   CRGB c = wsColor1();
   uint8_t fadeBy = wsFadeStep();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) wsLeds[i] = wsDim(wsLeds[i], 255 - fadeBy);
   if (random8() < 40) wsLeds[random8(WS_LED_COUNT)] = c;
   for (uint8_t i = 0; i < WS_LED_COUNT; i++)
-    if ((keyState >> i) & 1) wsLeds[i] = c;
+    if (keyDown(i)) wsLeds[i] = c;
 }
 
 // ---------------------------------------------------------------------------
@@ -437,12 +437,12 @@ static void wsRainbowWave() {
   wsHue   += 2;
 }
 
-static void wsRainbowSparkle(uint16_t keyState) {
+static void wsRainbowSparkle() {
   uint8_t fadeBy = wsFadeStep();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) wsLeds[i] = wsDim(wsLeds[i], 255 - fadeBy);
   if (random8() < 48) wsLeds[random8(WS_LED_COUNT)] = CHSV(random8(), 255, 255);
   for (uint8_t i = 0; i < WS_LED_COUNT; i++)
-    if ((keyState >> i) & 1) wsLeds[i] = CHSV(wsHue + i * 40, 255, 255);
+    if (keyDown(i)) wsLeds[i] = CHSV(wsHue + i * 40, 255, 255);
   wsHue += 2;
 }
 
@@ -459,22 +459,22 @@ static void wsDualBreath() {
   wsBreathPhase += wsScaleByDt(1 + (ledParams.speed >> 2));
 }
 
-static void wsDualPress(uint16_t keyState) {
+static void wsDualPress() {
   CRGB c1 = wsColor1(), c2 = wsColor2();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++)
-    wsLeds[i] = ((keyState >> i) & 1) ? c2 : c1;
+    wsLeds[i] = keyDown(i) ? c2 : c1;
 }
 
 /*
   按下 = 副色；松开后该键的“副色余量”按时间衰减回 0。
   背景（余量 0）永远是纯主色，亮度不会随余量变化，也不会污染别的键。
 */
-static void wsDualPressFade(uint16_t keyState) {
+static void wsDualPressFade() {
   CRGB c1 = wsColor1(), c2 = wsColor2();
   uint8_t fade = wsScaleByDt(4 + ledParams.speed);       // 每 20ms 5~24
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
     //按下立刻满副色，松开后线性衰减；背景（余量 0）= 纯主色，亮度不变
-    if ((keyState >> i) & 1) wsGlow[i] = 255;
+    if (keyDown(i)) wsGlow[i] = 255;
     else wsGlow[i] = qsub8(wsGlow[i], fade);
     wsLeds[i] = wsMix(c1, c2, wsGlow[i]);
   }
@@ -495,12 +495,12 @@ static void wsDualWave() {
   和"双色按下+渐回"的区别：这里是**累积**——每按一次加一截热度，越按越接近主色，
   松手后慢慢冷却；按下渐变则是"按下立刻副色、松开线性回到主色"的一次性包络。
 */
-static void wsDualTyping(uint16_t keyState) {
+static void wsDualTyping() {
   uint8_t hot  = wsScaleByDt(6 + ledParams.speed);
   uint8_t cool = wsScaleByDt(1 + (ledParams.speed >> 1));
   CRGB c1 = wsColor1(), c2 = wsColor2();
   for (uint8_t i = 0; i < WS_LED_COUNT; i++) {
-    if ((keyState >> i) & 1) wsHeat[i] = qadd8(wsHeat[i], hot);
+    if (keyDown(i)) wsHeat[i] = qadd8(wsHeat[i], hot);
     else wsHeat[i] = qsub8(wsHeat[i], cool);
     wsLeds[i] = wsMix(c2, c1, wsHeat[i]);
   }
@@ -517,7 +517,7 @@ static void wsDualGradient() {
 // ---------------------------------------------------------------------------
 // 主刷新
 // ---------------------------------------------------------------------------
-void wsTick(uint16_t keyState) {
+void wsTick() {
   uint32_t now = getFrameTime();
   uint32_t dtRaw = now - wsLastFrameMs;
 
@@ -535,34 +535,34 @@ void wsTick(uint16_t keyState) {
     // ---- 单色 ----
     case LED_EFFECT_OFF:              wsOff();                break;
     case LED_EFFECT_SOLID:            wsSolid();              break;
-    case LED_EFFECT_PRESS:            wsPress(keyState);      break;
-    case LED_EFFECT_PRESS_FADE:       wsPressFade(keyState);  break;
-    case LED_EFFECT_TYPING_HEAT:      wsTypingHeat(keyState); break;
+    case LED_EFFECT_PRESS:            wsPress();      break;
+    case LED_EFFECT_PRESS_FADE:       wsPressFade();  break;
+    case LED_EFFECT_TYPING_HEAT:      wsTypingHeat(); break;
     case LED_EFFECT_BREATH:           wsBreath();             break;
     case LED_EFFECT_WAVE:             wsWave();               break;
-    case LED_EFFECT_SPARKLE:          wsSparkle(keyState);    break;
-    case LED_EFFECT_RIPPLE:           wsDrawRipple(false, keyState); break;
-    case LED_EFFECT_COMET_MONO:       wsDrawComet(0, keyState); break;
+    case LED_EFFECT_SPARKLE:          wsSparkle();    break;
+    case LED_EFFECT_RIPPLE:           wsDrawRipple(false); break;
+    case LED_EFFECT_COMET_MONO:       wsDrawComet(0); break;
     // ---- 炫彩 ----
     case LED_EFFECT_RAINBOW:          wsRainbow();            break;
     case LED_EFFECT_RAINBOW_BREATH:   wsRainbowBreath();      break;
     case LED_EFFECT_RAINBOW_WAVE:     wsRainbowWave();        break;
-    case LED_EFFECT_RAINBOW_SPARKLE:  wsRainbowSparkle(keyState); break;
-    case LED_EFFECT_COMET_RAINBOW:    wsDrawComet(1, keyState); break;
+    case LED_EFFECT_RAINBOW_SPARKLE:  wsRainbowSparkle(); break;
+    case LED_EFFECT_COMET_RAINBOW:    wsDrawComet(1); break;
     // ---- 双色 ----
     case LED_EFFECT_DUAL_BREATH:      wsDualBreath();         break;
-    case LED_EFFECT_DUAL_PRESS:       wsDualPress(keyState);  break;
-    case LED_EFFECT_DUAL_PRESS_FADE:  wsDualPressFade(keyState); break;
+    case LED_EFFECT_DUAL_PRESS:       wsDualPress();  break;
+    case LED_EFFECT_DUAL_PRESS_FADE:  wsDualPressFade(); break;
     case LED_EFFECT_DUAL_WAVE:        wsDualWave();           break;
-    case LED_EFFECT_DUAL_COMET:       wsDrawComet(2, keyState); break;
-    case LED_EFFECT_DUAL_TYPING:      wsDualTyping(keyState); break;
+    case LED_EFFECT_DUAL_COMET:       wsDrawComet(2); break;
+    case LED_EFFECT_DUAL_TYPING:      wsDualTyping(); break;
     case LED_EFFECT_DUAL_GRADIENT:    wsDualGradient();       break;
-    case LED_EFFECT_DUAL_RIPPLE:      wsDrawRipple(true, keyState); break;
-    default:                          wsPress(keyState);      break;
+    case LED_EFFECT_DUAL_RIPPLE:      wsDrawRipple(true); break;
+    default:                          wsPress();      break;
   }
 
   FastLED.show();
-  wsPrevKeys = keyState;
+  for (uint8_t i = 0; i < WS_LED_COUNT; i++) wsPrevDown[i] = keyDown(i) ? 1 : 0;
 }
 
 #endif

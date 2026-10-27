@@ -1,16 +1,20 @@
 ﻿#ifndef EEPROMManager_h
 #define EEPROMManager_h
-#include "Universal.h"
+
 #include <EEPROM.h>
-#include "WS2812BManager.h"      // 灯效参数结构体 LEDParams_t / ledParams
+//全局变量所在的文件
+#include "Universal.h"
+#include "WS2812BManager.h"
+#include "KeyBehaviorManager.h"
 
 #define DEBOUNCE_EEPROM_POS 0
 #define DEBOUNCE_MIN 1
 #define DEBOUNCE_MAX 20
 //映射区起始位置，紧跟在按键参数区之后
 #define KEYMAP_START_POSITION 1
-//灯光参数区：紧跟在映射区之后，整块就是一个 LEDParams_t（9 字节）
+//灯光参数区：紧跟在映射区之后，整块就是一个 LEDParams_t（10 字节）
 #define LED_PARAMS_START_POSITION (KEYMAP_START_POSITION + BUTTONCOUNT * KEYMAP_SIZE_PER_KEY)
+//连发参数区的位置 / 存读函数都在 KeyBehaviorEEPROM.h 里（按键功能的存储单独一个文件）
 
 //按 (key, slot) 直接算出映射在 EEPROM 里的位置：
 //每个按键占 KEYMAP_SIZE_PER_KEY 字节，按键之间依次紧挨；
@@ -23,7 +27,7 @@ int keyMapSlotToEEPROMIndex(uint8_t key, uint8_t slot){
 //KEYBOARD..MULTIMEDIA(1~4)。所以只要读到的值不在这段范围里 ——
 //0（正常空槽）、0xFF（没写过）、或者旧格式的残留数据 —— 一律按"空槽"处理。
 bool keyMapSlotIsEmpty(uint8_t device){
-  return !(device >= KEYBOARD && device <= MULTIMEDIA);
+  return ( (device == NO_DEVICE) || (device == 0xFF) );
 }
 
 //-------- 供 HIDcmdHandler 的查询功能调用，这里只负责从 EEPROM 取数据 --------
@@ -46,13 +50,13 @@ uint8_t keyMapGetFromEEPROM(uint8_t key, uint8_t slot, uint8_t *offset){
 //也就是把"这个按键从第 slot 条以后"的映射全部清掉。
 //读映射时遇到空槽就会停，所以调用方只需要按顺序发它有的那几条映射，
 //不用再逐条补发空槽（NO_DEVICE 就是 0，用宏写更清楚）。
-//注意：只要传进来的 slot < MAXIMUM_BINDABLE_KEY 就不会越界；
-//改 BUTTONCOUNT / MAXIMUM_BINDABLE_KEY 时请自行核对映射区总大小（见 Universal.h）
+//注意：只要传进来的 slot < MAX_BINDINGS_PER_KEY 就不会越界；
+//改 BUTTONCOUNT / MAX_BINDINGS_PER_KEY 时请自行核对映射区总大小（见 Universal.h）
 void keyMapClearInEEPROM(uint8_t key, uint8_t slot){
-  if(!(key < BUTTONCOUNT) || !(slot < MAXIMUM_BINDABLE_KEY)){
+  if(!(key < BUTTONCOUNT) || !(slot < MAX_BINDINGS_PER_KEY)){
     return;
   }
-  for(uint8_t s = slot; s < MAXIMUM_BINDABLE_KEY; s++){
+  for(uint8_t s = slot; s < MAX_BINDINGS_PER_KEY; s++){
     if(EEPROM.read(keyMapSlotToEEPROMIndex(key, s)) != NO_DEVICE){
       EEPROM.write(keyMapSlotToEEPROMIndex(key, s), NO_DEVICE);
     }
@@ -62,7 +66,7 @@ void keyMapClearInEEPROM(uint8_t key, uint8_t slot){
 uint8_t _keyCodeSetToEEPROM(uint8_t key, uint8_t slot, uint8_t device, uint8_t offset) {
   //索引由 (key, slot) 直接算出，不再做 EEPROM 越界检查（见 Universal.h 的说明），
   //只保证 key / slot 合法，否则会写到别的按键的映射区里去
-  if(!(key < BUTTONCOUNT) || !(slot < MAXIMUM_BINDABLE_KEY)){
+  if(!(key < BUTTONCOUNT) || !(slot < MAX_BINDINGS_PER_KEY)){
     return 2;
   }
   int index = keyMapSlotToEEPROMIndex(key, slot);
@@ -82,7 +86,7 @@ uint8_t keyCodeAddToEEPROM(uint8_t key, uint8_t device, uint8_t offset) {
     return 2;
   }
   //从该按键自己的映射区里找第一个空槽追加（0 和 0xFF 都算空槽）
-  for(uint8_t slot = 0; slot < MAXIMUM_BINDABLE_KEY; slot++){
+  for(uint8_t slot = 0; slot < MAX_BINDINGS_PER_KEY; slot++){
     if(keyMapSlotIsEmpty(EEPROM.read(keyMapSlotToEEPROMIndex(key, slot)))){
       _keyCodeSetToEEPROM(key, slot, device, offset);
       #if DEBUG
@@ -93,7 +97,7 @@ uint8_t keyCodeAddToEEPROM(uint8_t key, uint8_t device, uint8_t offset) {
     }
   }
   #if DEBUG
-    sprintf(buff, "映射追加失败:按键 %d 的 %d 个映射槽已满", key, MAXIMUM_BINDABLE_KEY);
+    sprintf(buff, "映射追加失败:按键 %d 的 %d 个映射槽已满", key, MAX_BINDINGS_PER_KEY);
     Serial.println(buff);
   #endif
   return 1;
@@ -110,21 +114,13 @@ uint8_t offsetToArrayIndex(uint8_t offset){
 }
 void keyMapAppend(uint8_t key, uint8_t device, uint8_t offset){
   if(key < BUTTONCOUNT){
-    for(uint8_t i = 0; i < MAXIMUM_BINDABLE_KEY; i++){
+    for(uint8_t i = 0; i < MAX_BINDINGS_PER_KEY; i++){
       if(key_map[key][i][0] == NO_DEVICE){
-        if(device == KEYBOARD){
+        if( (device & 0x0F) == KEYBOARD){
           key_map[key][i][0] = device;
           key_map[key][i][1] = offsetToArrayIndex(offset);
           break;
-        }else if(device == CONTROLLER){
-          key_map[key][i][0] = device;
-          key_map[key][i][1] = offset;
-          break;
-        }else if(device == MOUSE){
-          key_map[key][i][0] = device;
-          key_map[key][i][1] = offset;
-          break;
-        }else if(device == MULTIMEDIA){
+        }else{
           key_map[key][i][0] = device;
           key_map[key][i][1] = offset;
           break;
@@ -139,8 +135,8 @@ void keyMapAppend(uint8_t key, uint8_t device, uint8_t offset){
 
 void keyCodeGetFromEEPROM(uint8_t key){
   //一个按键一个按键地读：读到空槽（device 不是 1~4）说明本按键的映射到此为止，
-  //或者已经读满 MAXIMUM_BINDABLE_KEY 个也停
-  for(uint8_t slot = 0; slot < MAXIMUM_BINDABLE_KEY; slot++){
+  //或者已经读满 MAX_BINDINGS_PER_KEY 个也停
+  for(uint8_t slot = 0; slot < MAX_BINDINGS_PER_KEY; slot++){
     int index = keyMapSlotToEEPROMIndex(key, slot);
     uint8_t device = 0;
     uint8_t offset = 0;
@@ -209,6 +205,7 @@ void keyCodeInit() {
   for(uint8_t key = 0; key < BUTTONCOUNT; key++){
     keyCodeGetFromEEPROM(key);
   }
+  stickyKeyInit();
 }
 
 #if DEBUG
@@ -225,7 +222,7 @@ void keyCodeInit() {
   }
   void showAllBindings(){
     for(int key = 0; key < BUTTONCOUNT; key++){
-      for(int slot = 0; slot < MAXIMUM_BINDABLE_KEY; slot++){
+      for(int slot = 0; slot < MAX_BINDINGS_PER_KEY; slot++){
         showBinding(key, slot);
       }
     }

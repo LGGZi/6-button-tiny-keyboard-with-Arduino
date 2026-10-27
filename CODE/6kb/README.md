@@ -8,7 +8,7 @@
 - 目标芯片：ATmega32u4（Arduino Leonardo 内核，`arduino:avr:leonardo`）
 - 按键数量：`BUTTONCOUNT = 6`，**普通机械轴**（数字输入，带上拉，低电平有效）
 - 每个键一颗 WS2812B 灯（数据脚 D4，2 行 × 3 列）
-- 固件版本：`FIRMWARE_VERSION`（`Universal.h`，当前 `0x46` = 1.06）
+- 固件版本：`FIRMWARE_VERSION`（`Universal.h`，当前 `0x49` = 1.11）
 - 要求的上位机版本：`HOST_VERSION_REQUIRED`（`Universal.h`，当前 `0x47` = 1.07）
 - 上位机协议：Report ID **4**，8 字节指令（与 KeyboardOG 上位机配套）
 
@@ -23,7 +23,9 @@
 |---|---|---|
 | `6kb.ino` | `setup()` / `loop()`：引脚、灯带、主循环调度 | 加新的每轮任务 |
 | `Universal.h` | 全局配置：按键数、映射槽数、按键引脚表、编码器引脚、去抖默认值、固件版本、`report` | 改按键数、改引脚 |
-| `KeyManager.h` | 按键扫描 + 去抖 `getKeyState()`、映射翻译 `keyOperation()` | 改去抖手感、改映射语义 |
+| `KeyManager.h` | 按键扫描 + 去抖 `updateKeyState()`、映射翻译 `keyOperation()` | 改去抖手感、改映射语义 |
+| `KeyBehaviorManager.h` | 特殊按键功能：粘滞键 / 连发 / 功能开关映射（`keyBehavior` 相关） | 加新的 behavior、改功能时序 |
+| `KeyBehaviorEEPROM.h` | 按键功能参数的 EEPROM 存读（连发参数区：magic / 开关 / 脉宽 / 间隔 / 预留） | 改参数存储格式 |
 | `WS2812BManager.h` | 灯效：参数结构体、EEPROM 存取、12 种灯效、50fps 帧调度 | 加灯效、调参数 |
 | `EEPROMManager.h` | EEPROM：去抖时间（第 0 字节）+ 映射区 + 灯效参数区、启动载入 | 改存储格式 |
 | `HIDcmdHandler.h` | 上位机指令解析、ACK/FIN、查询回传、设备信息帧 | 加指令、改回传 |
@@ -40,8 +42,9 @@ wsInit();                                      // 灯带初始化（FastLED.addL
 ledParamsGetFromEEPROM();                      // 读灯效参数；无效就写默认值
 for (i) pinMode(buttonPins[i], INPUT_PULLUP);  // 6 个按键：上拉输入，按下为 LOW
 pinMode(ENC_L_A/B, INPUT_PULLUP);              // 编码器引脚（当前固件未实现解码，见 §9）
-debounceGetFromEEPROM();                       // EEPROM[0] → release_debounce
-keyCodeInit();                                 // EEPROM 映射区 → key_map[][][]
+debounceTimeGetFromEEPROM();                   // EEPROM[0] → release_debounce
+keyCodeInit();                                 // EEPROM 映射区 → key_map[][]（并跑 stickyKeyInit）
+rapidParamsGetFromEEPROM();                    // 连发参数区 → rk_args（见 KeyBehaviorEEPROM.h）
 ```
 
 注意 `keyCodeInit()` 只在**上电**执行一次：上位机改完映射后会发 `CMD_REFRESH`，由指令处理再调一次。
@@ -51,16 +54,19 @@ keyCodeInit();                                 // EEPROM 映射区 → key_map[]
 ## 3. 主循环（`loop()`）
 
 ```c
+frameTimeUpdate();            // 每帧只读一次 millis()（见 §3.1）
+updateKeyState();             // 扫描 + 去抖 → keys[]
 reportBufferClear();          // 清报文
 report.lyAxis = -128;         // 手柄左摇杆归位（否则每轮清空后会变 0 = 摇杆偏上）
-keyOperation(getKeyState());  // 扫描去抖 → 位图 → 填 report
-wsTick(buttonbuf);            // 灯效：内部按 fps 限速，每帧只 FastLED.show() 一次
+keyOperation();               // 常规映射 → 填 report
+keyOperation_stickyKey();     // 粘滞键：把“保持输出”的键写进 report
+wsTick();                     // 灯效：内部按 fps 限速，每帧只 FastLED.show() 一次
 HIDcmdResponseIfChanged();    // 处理上位机指令（去重后回应）
 HIDStateUpdate(2);            // 每 2 轮真正发一次 HID 报文
 delayMicroseconds(500);       // 主循环节拍
 ```
 
-- 灯用的是 **`buttonbuf`（物理按下状态）**，不是去抖后的 `key_trigger_state`，所以按下瞬间就亮；
+- 灯效直接读 `keys[i].down`（去抖后的按下状态），不再传位图参数；
 - `report` 每轮清零重建，映射是“电平触发”，松手即消失；
 - `lyAxis = -128` 是历史行为（原来手柄模式下摇杆中位），删掉会让系统认为左摇杆一直偏上；
 - 灯效刷新率和主循环解耦：主循环约 500µs 一轮，`wsTick()` 内部按 `fps` 限速（默认 50fps）。
@@ -164,7 +170,8 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 偏移 1        映射区：BUTTONCOUNT * KEYMAP_SIZE_PER_KEY = 6 * 24 = 144 字节
               每键 12 槽 × (device, offset) 2 字节，按键之间依次紧挨
 偏移 145      灯效参数区：LEDParams_t（10 字节，见 §8）
-合计          155 字节（ATmega32u4 有 1024 字节，剩余约 869）
+偏移 155      连发参数区：RapidKeyArgs_t（7 字节：magic / 总开关 / 脉宽 / 间隔 / 预留）
+合计          162 字节（ATmega32u4 有 1024 字节，剩余约 862）
 ```
 
 - `#define KEYMAP_START_POSITION 1`；灯效区偏移由宏计算，不要写死：
@@ -186,6 +193,8 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 | `CMD_QUERY` | 0x04 | `[1]=0 映射 / 0x03 灯效 / 0xFE 布局 / 0xFF 设备信息` |
 | `CMD_ACK` / `CMD_FIN` | 0x05 / 0x06 | 回传 |
 | `CMD_REFRESH` | 0x07 | `[1]=0` 重新载入映射 |
+| `CMD_SET_RAPID` | 0x0C | 设置连发参数：`[1]=开关 [2]=脉宽 [3..4]=间隔 [5..6]=预留` |
+| `CMD_SAVE_RAPID` | 0x0D | 保存连发参数：`[1]=0x6C` 确认（保存前固件会把开关强制置 1） |
 | `CMD_SET_LED` | 0x08 | 即时灯效：`[1]=effect [2]=亮度 [3]=速度 [4..6]=主色 RGB` |
 | `CMD_SET_LED_ACCENT` | 0x09 | 即时副色：`[1..3]=副色 RGB` |
 | `CMD_SAVE_LED` | 0x0A | 保存灯效：`[1]=0x5A` 确认字节 |

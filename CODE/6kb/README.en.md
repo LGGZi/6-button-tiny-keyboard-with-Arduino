@@ -9,7 +9,7 @@ explain *why* something is written that way; this file explains *how it works ov
 - MCU: ATmega32u4 (Arduino Leonardo core, `arduino:avr:leonardo`)
 - Keys: `BUTTONCOUNT = 6`, **plain mechanical switches** (digital input, pull-up, active low)
 - One WS2812B per key (data on D4, arranged as 2 rows × 3 columns)
-- Firmware version: `FIRMWARE_VERSION` in `Universal.h`, currently `0x46` = 1.06
+- Firmware version: `FIRMWARE_VERSION` in `Universal.h`, currently `0x49` = 1.11
 - Required host version: `HOST_VERSION_REQUIRED` in `Universal.h`, currently `0x47` = 1.07
 - Host protocol: Report ID **4**, 8-byte commands (used by the KeyboardOG host tool)
 
@@ -25,7 +25,9 @@ explain *why* something is written that way; this file explains *how it works ov
 |---|---|---|
 | `6kb.ino` | `setup()` / `loop()`: pins, LED strip, main-loop scheduling | adding work to the loop |
 | `Universal.h` | global config: key count, mapping slots, pin table, encoder pins, debounce default, firmware version, `report` | key count, pins |
-| `KeyManager.h` | key scan + debounce `getKeyState()`, mapping translation `keyOperation()` | debounce feel, mapping semantics |
+| `KeyManager.h` | key scan + debounce `updateKeyState()`, mapping translation `keyOperation()` | debounce feel, mapping semantics |
+| `KeyBehaviorManager.h` | special key behaviours: sticky keys / auto repeat / feature-toggle mappings | adding behaviours, timing |
+| `KeyBehaviorEEPROM.h` | EEPROM for behaviour parameters (repeat params: magic / toggle / pulse / interval / reserved) | storage format of those params |
 | `WS2812BManager.h` | LED effects: parameter struct, EEPROM helpers, 12 effects, frame pacing | adding effects, parameters |
 | `EEPROMManager.h` | EEPROM: debounce byte (0) + mapping area + LED area, load at boot | storage layout |
 | `HIDcmdHandler.h` | host command parsing, ACK/FIN, query replies, device-info frame | new commands, reply format |
@@ -42,8 +44,9 @@ wsInit();                                      // LED strip: FastLED.addLeds + c
 ledParamsGetFromEEPROM();                      // load LED params (writes defaults if invalid)
 for (i) pinMode(buttonPins[i], INPUT_PULLUP);  // 6 keys: pull-up input, pressed = LOW
 pinMode(ENC_L_A/B, INPUT_PULLUP);              // encoder pins (decoding not implemented, see §9)
-debounceGetFromEEPROM();                       // EEPROM[0] -> release_debounce
-keyCodeInit();                                 // EEPROM mapping area -> key_map[][][]
+debounceTimeGetFromEEPROM();                   // EEPROM[0] -> release_debounce
+keyCodeInit();                                 // EEPROM mapping area -> key_map[][] (also runs stickyKeyInit)
+rapidParamsGetFromEEPROM();                    // repeat params -> rk_args (see KeyBehaviorEEPROM.h)
 ```
 
 `keyCodeInit()` only runs at **power-up**; after the host changes a mapping it sends
@@ -54,17 +57,19 @@ keyCodeInit();                                 // EEPROM mapping area -> key_map
 ## 3. Main loop (`loop()`)
 
 ```c
+frameTimeUpdate();            // read millis() once per frame (see §3.1)
+updateKeyState();             // scan + debounce -> keys[]
 reportBufferClear();          // clear the HID report
 report.lyAxis = -128;         // park the gamepad left stick
-keyOperation(getKeyState());  // scan + debounce -> bitmap -> fill the report
-wsTick(buttonbuf);            // LED effects: paced by fps, one FastLED.show() per frame
+keyOperation();               // normal mappings -> report
+keyOperation_stickyKey();     // sticky keys: write the latched keys into the report
+wsTick();                     // LED effects: paced by fps, one FastLED.show() per frame
 HIDcmdResponseIfChanged();    // handle host commands (deduplicated)
 HIDStateUpdate(2);            // actually send a HID report every 2 iterations
 delayMicroseconds(500);       // main-loop tick
 ```
 
-- The LEDs follow **`buttonbuf` (physical state)**, not the debounced `key_trigger_state`,
-  so they light up the moment the switch closes.
+- LED effects read `keys[i].down` (the debounced state) directly and take no bitmap argument.
 - `report` is cleared and rebuilt every iteration, so mappings are level-triggered.
 - `lyAxis = -128` is historic behaviour: clearing the report would put the left stick at 0
   (= pushed up), so the neutral value is restored by hand.
@@ -173,7 +178,8 @@ offset 0      debounce time (1 byte, 1..20, default 1)
 offset 1      mapping area: BUTTONCOUNT * KEYMAP_SIZE_PER_KEY = 6 * 24 = 144 bytes
               12 slots per key × (device, offset) 2 bytes
 offset 145    LED parameters: LEDParams_t (10 bytes, see §8)
-total         155 bytes (ATmega32u4 has 1024, ~869 free)
+offset 155    repeat parameters: RapidKeyArgs_t (7 bytes: magic / toggle / pulse / interval / reserved)
+total         162 bytes (ATmega32u4 has 1024, ~862 free)
 ```
 
 - `#define KEYMAP_START_POSITION 1`; the LED area offset is computed, never hard-coded:
@@ -195,6 +201,8 @@ total         155 bytes (ATmega32u4 has 1024, ~869 free)
 | `CMD_QUERY` | 0x04 | `[1]=0 mapping / 0x03 LED / 0xFE layout / 0xFF device info` |
 | `CMD_ACK` / `CMD_FIN` | 0x05 / 0x06 | replies |
 | `CMD_REFRESH` | 0x07 | `[1]=0` reload mappings |
+| `CMD_SET_RAPID` | 0x0C | set repeat params: `[1]=toggle [2]=pulse [3..4]=interval [5..6]=reserved` |
+| `CMD_SAVE_RAPID` | 0x0D | save repeat params: `[1]=0x6C` confirm (firmware forces toggle=1 before saving) |
 | `CMD_SET_LED` | 0x08 | live LED: `[1]=effect [2]=brightness [3]=speed [4..6]=color1 RGB` |
 | `CMD_SET_LED_ACCENT` | 0x09 | live accent colour: `[1..3]=color2 RGB` |
 | `CMD_SAVE_LED` | 0x0A | persist LED params: `[1]=0x5A` confirm |
