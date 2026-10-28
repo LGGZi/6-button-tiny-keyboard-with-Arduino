@@ -51,9 +51,7 @@ void rapidParamsSetDefault(){
   rk_args.variation = RAPID_VARIATION_DEFAULT;
 }
 
-//按上位机发来的值改内存里的参数（越界自动夹紧），不写 EEPROM。
-//注意：toggle 参数只是占位，**不赋值** —— 连发开关只能由键盘上的映射（0x2F）切换，
-//上位机永远不能直接改它，避免软件把功能悄悄关掉。
+//按上位机发来的值改内存里的参数。
 void rapidParamsApply(uint8_t toggle, uint8_t pulse, uint16_t interval, uint16_t variation){
   (void)toggle;
   rk_args.pulse     = (uint8_t)(pulse < RAPID_PULSE_MIN ? RAPID_PULSE_MIN

@@ -99,15 +99,13 @@ void rapidTabBehavior_toggle(){
   }else{
     rk_args.toggle = 0;
   }
-  //开关状态跟着结构体一起存，掉电后保持（一次按键一次写入，EEPROM 寿命足够）
-  rapidParamsSaveToEEPROM();
 }
 void rapidTabBehavior(uint8_t key, uint8_t device, uint8_t offset){
   static uint32_t pre_time[BUTTONCOUNT] = {0};
-  if (keyDownEdge(key)) {
-    pre_time[key] = 0;   //刚刚按下的时候（按键下降沿）重置计时，立即发送按键
-  }
   if(rk_args.toggle == 1){
+    if (keyDownEdge(key)) {
+      pre_time[key] = 0;   //刚刚按下的时候（按键下降沿）重置计时，立即发送按键
+    }
     if(getFrameTime() - pre_time[key] > rk_args.interval){
       keyCodeWrite(device, offset);
     }
@@ -115,7 +113,6 @@ void rapidTabBehavior(uint8_t key, uint8_t device, uint8_t offset){
       pre_time[key] = getFrameTime();
     }
   }
-
 }
 
 #endif
