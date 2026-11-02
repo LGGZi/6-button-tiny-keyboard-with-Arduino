@@ -4,7 +4,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Arduino%20Leonardo%20%2F%20ATmega32u4-00979D?logo=arduino&logoColor=white)](#hardware)
 [![Protocol](https://img.shields.io/badge/HID-Report%20ID%204%20%C2%B7%208%20bytes-6f42c1)](#protocol-at-a-glance)
-[![Firmware](https://img.shields.io/badge/firmware-1.06-blue)](#firmware-version-check)
+[![Firmware](https://img.shields.io/badge/firmware-1.12-blue)](#firmware-version-check)
 [![Host](https://img.shields.io/badge/host-KeyboardOG%20%E2%89%A5%201.07-2ea44f)](https://github.com/LGGZi/KeyBoard-OG-key-binding-tool)
 
 A tiny keyboard that fits under one hand, originally built for osu!-style games that want
@@ -30,12 +30,38 @@ host ──(HID Report ID 4, 8-byte commands)──> firmware
   internal pull-ups, pressed = low.
 - **Press is immediate**; a release needs `release_debounce` ms of continuous release.
   The value lives in EEPROM byte 0, range 1-20 ms (default 1).
-- The state bitmap is **latched**: bits change only on transitions, so a key resting between
-  thresholds never loses its state.
+- Each key has a persistent `KeyRuntime` struct (`raw / down / down_edge / pressedAt`); the state
+  is not recomputed from scratch every pass. `down_edge` is 1 only on the frame the key went
+  down, which is what sticky keys and auto repeat trigger on. Read it through
+  `keyDown(i)` / `keyRaw(i)` / `keyDownEdge(i)`.
+
+### Key behaviours (sticky / auto repeat)
+
+The high nibble of a mapping's `device` byte is the **behaviour**; the low nibble is the device:
+
+| High nibble | Meaning | Low nibble |
+|---|---|---|
+| 0 | normal mapping | device 1..4 |
+| 1 `STICKY` | sticky key | `0x0E` toggle switch (host-injected) / `0x0F` master switch |
+| 2 `RAPID_TAB` | auto repeat | `0x0D` interval down / `0x0E` interval up / `0x0F` master switch |
+| 3 `STICKY_RAPID_TAB` | sticky + repeat | device 1..4 (keeps repeating once latched) |
+
+- **Sticky key**: press once to latch, press again to release. The host injects one `0x1E`
+  toggle switch per key (slot 0); `0x1F` is the user-bound master switch.
+- **Auto repeat**: fires immediately, then repeats every *interval* ms with each press held for
+  *pulse* ms. The repeat master switch can only be toggled by a `0x2F` mapping on the keyboard
+  (the host never changes it; saving parameters forces the EEPROM toggle to 1).
+- **Sticky + repeat**: once the sticky key is latched it keeps repeating at the repeat interval;
+  the key still needs the `0x1E` switch (host-injected) and is still gated by `0x2F` and the
+  repeat parameters.
+- **Interval up / down** (`0x2E` / `0x2D`) change the interval by the configured *step* per press,
+  clamped to 10..5000 ms, runtime only — never saved to EEPROM.
+- Version gates: sticky / repeat need firmware **1.10+**, repeat parameters need **1.11+**,
+  interval +/- and sticky+repeat need **1.12+**. The host disables the controls on older firmware.
 
 ### LEDs (one WS2812B per key)
 
-- Data pin **D4**, 12 effects in three groups, integer maths only, 10..200 fps:
+- Data pin **D4**, 23 effects in three groups, integer maths only, 10..200 fps:
   - **mono**: off / solid / press / press + afterglow / typing heat / breath / wave /
     sparkle / ripple / comet
   - **rainbow**: rainbow flow / rainbow breathing / rainbow wave / rainbow sparkle /
@@ -67,11 +93,13 @@ host ──(HID Report ID 4, 8-byte commands)──> firmware
   | Byte | Meaning |
   |---|---|
   | `[6]` | host version this firmware expects (currently `0x47` = 1.07) |
-  | `[7]` | firmware version (currently `0x46` = 1.06) |
+  | `[7]` | firmware version (currently `0x4A` = 1.12) |
 
 - The host compares them on connect: if the firmware expects a newer host, the status bar and
   log say so and the version label turns red. The host also keeps a
   "software version ↔ supported firmware range" table.
+- The current host **1.11** supports firmware **1.10 – 1.57**; this 1.12 firmware is inside that
+  range, so sticky keys, auto repeat and interval +/- are all available.
 
 ---
 
@@ -85,13 +113,17 @@ Open `CODE/6kb/6kb.ino` in the Arduino IDE, select **Arduino Leonardo**, upload.
 
 1. Start [KeyboardOG](https://github.com/LGGZi/KeyBoard-OG-key-binding-tool), click "Refresh",
    and pick your keyboard (only devices that answer the device-info probe are listed).
-2. Click "Connect": device info, all mappings and the LED settings are read automatically.
+2. Click "Connect": device info, all mappings and the LED settings are read automatically;
+   firmware 1.11+ also reports the repeat parameters.
 
-### 3. Write mappings / tune LEDs
+### 3. Write mappings / behaviours / LEDs
 
 1. Pick a key on the left, click the target key on the right (left click replaces, right click
    appends, clicking an existing binding removes it), then press "Write current key".
-2. Switch to the "LED" tab: choose group and effect, drag brightness / speed / frame rate,
+   To create sticky / auto-repeat mappings, choose the behaviour in **Key behaviour** first.
+2. Repeat parameters (interval / pulse / step) sit below the behaviour buttons; press
+   "Write (apply now)" to apply them, or "Save to keyboard" to persist them in EEPROM.
+3. Switch to the "LED" tab: choose group and effect, drag brightness / speed / frame rate,
    pick both colours — changes apply immediately; press "Save LED" to store them.
 
 ---
@@ -132,7 +164,7 @@ arduino-cli compile --fqbn arduino:avr:leonardo CODE/6kb
 arduino-cli upload  --fqbn arduino:avr:leonardo -p COM5 CODE/6kb
 ```
 
-Current footprint: ~16.2 KB flash of 28 KB, ~640 B RAM of 2.5 KB.
+Current footprint (1.12): **17160 B flash / 28672 B (59%)**, **701 B RAM / 2560 B (27%)**.
 
 ---
 
@@ -145,7 +177,9 @@ Current footprint: ~16.2 KB flash of 28 KB, ~640 B RAM of 2.5 KB.
 │  ├─ 6kb.ino                   setup / loop
 │  ├─ Universal.h               global config (key count, pins, versions, report)
 │  ├─ KeyManager.h              key scan, debounce, mapping translation
-│  ├─ WS2812BManager.h          LED effects (parameter struct, EEPROM, 12 effects, pacing)
+│  ├─ KeyBehaviorManager.h      sticky keys / auto repeat / feature switches
+│  ├─ KeyBehaviorEEPROM.h       repeat parameters in EEPROM
+│  ├─ WS2812BManager.h          LED effects (parameter struct, EEPROM, 23 effects, pacing)
 │  ├─ EEPROMManager.h           EEPROM layout and access
 │  ├─ HIDcmdHandler.h           host commands / queries / device info
 │  ├─ LayoutManager.h           layout table + per-key upload
@@ -167,6 +201,8 @@ incrementing host sequence (the firmware drops a command identical to the previo
 | query | 0x04 | `[1]=0 mapping / 0x03 LED / 0xFE layout / 0xFF device info` |
 | ACK / FIN | 0x05 / 0x06 | replies |
 | refresh | 0x07 | reload from EEPROM |
+| set repeat | 0x0C | `[1]=reserved [2]=pulse [3..4]=interval [5..6]=step` |
+| save repeat | 0x0D | `[1]=0x6C` confirm (firmware forces toggle=1) |
 | set LED | 0x08 | `[1]=effect [2]=brightness [3]=speed [4..6]=color1` |
 | set accent | 0x09 | `[1..3]=color2` |
 | save LED | 0x0A | `[1]=0x5A` confirm |
@@ -178,6 +214,11 @@ Command conventions:
 2. **The device-info frame has no FIN**: end the query when the `0xFF` frame arrives — a
    device-info reply itself carries no FIN.
 3. **The firmware drops duplicate commands**: increment `[7]` every time.
+
+The high nibble of `device` is the behaviour and the low nibble is the device type; an empty
+slot is detected by **the whole byte == 0**, so switches such as `0x1F` / `0x2F` are not mistaken
+for empty slots. See [`CODE/6kb/README.en.md`](CODE/6kb/README.en.md) for the behaviour table and
+repeat parameters.
 
 Full byte layouts, reply formats and the EEPROM map are in
 [`CODE/6kb/README.en.md`](CODE/6kb/README.en.md) ([中文](CODE/6kb/README.md)).
@@ -208,10 +249,17 @@ Full byte layouts, reply formats and the EEPROM map are in
 - That is the WS2812B itself at low levels; the firmware disables FastLED temporal dithering
   and consistently scales with `scale8`.
 
+**Q: sticky / auto repeat does nothing**
+
+- Check the firmware version: sticky / repeat need 1.10+, repeat parameters need 1.11+,
+  interval +/- and sticky+repeat need 1.12+.
+- A sticky key must carry a `0x1E` toggle switch (the host injects it automatically), and the
+  repeat master switch `0x2F` must be on — bind a `0x2F` mapping to toggle it from the keyboard.
+
 **Q: can this become a 9-key board?**
 
 - Change the macros yourself (`BUTTONCOUNT`, the pin table, `key_map` sizes) and adapt
-  `getKeyState()` — the scan/debounce function that returns the pressed-bit bitmap — to your
+  `updateKeyState()` — the scan/debounce function that fills the `keys[]` structs — to your
   key count.
 - Also convert your layout with the KLE → layout-array tool in the host's `tools/` folder and
   replace the array in the layout file, so the host can draw your layout instead of a plain grid.

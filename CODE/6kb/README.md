@@ -8,7 +8,7 @@
 - 目标芯片：ATmega32u4（Arduino Leonardo 内核，`arduino:avr:leonardo`）
 - 按键数量：`BUTTONCOUNT = 6`，**普通机械轴**（数字输入，带上拉，低电平有效）
 - 每个键一颗 WS2812B 灯（数据脚 D4，2 行 × 3 列）
-- 固件版本：`FIRMWARE_VERSION`（`Universal.h`，当前 `0x49` = 1.11）
+- 固件版本：`FIRMWARE_VERSION`（`Universal.h`，当前 `0x4A` = 1.12，新增连发间隔增减映射 0x2E / 0x2D、粘滞 + 连发 behavior 3）
 - 要求的上位机版本：`HOST_VERSION_REQUIRED`（`Universal.h`，当前 `0x47` = 1.07）
 - 上位机协议：Report ID **4**，8 字节指令（与 KeyboardOG 上位机配套）
 
@@ -25,9 +25,9 @@
 | `Universal.h` | 全局配置：按键数、映射槽数、按键引脚表、编码器引脚、去抖默认值、固件版本、`report` | 改按键数、改引脚 |
 | `KeyManager.h` | 按键扫描 + 去抖 `updateKeyState()`、映射翻译 `keyOperation()` | 改去抖手感、改映射语义 |
 | `KeyBehaviorManager.h` | 特殊按键功能：粘滞键 / 连发 / 功能开关映射（`keyBehavior` 相关） | 加新的 behavior、改功能时序 |
-| `KeyBehaviorEEPROM.h` | 按键功能参数的 EEPROM 存读（连发参数区：magic / 开关 / 脉宽 / 间隔 / 预留） | 改参数存储格式 |
-| `WS2812BManager.h` | 灯效：参数结构体、EEPROM 存取、12 种灯效、50fps 帧调度 | 加灯效、调参数 |
-| `EEPROMManager.h` | EEPROM：去抖时间（第 0 字节）+ 映射区 + 灯效参数区、启动载入 | 改存储格式 |
+| `KeyBehaviorEEPROM.h` | 按键功能参数的 EEPROM 存读（连发参数区：magic / 开关 / 脉宽 / 间隔 / 步长） | 改参数存储格式 |
+| `WS2812BManager.h` | 灯效：参数结构体、EEPROM 存取、23 种灯效、50fps 帧调度 | 加灯效、调参数 |
+| `EEPROMManager.h` | EEPROM：去抖时间（第 0 字节）+ 映射区 + 灯效参数区 + 连发参数区、启动载入 | 改存储格式 |
 | `HIDcmdHandler.h` | 上位机指令解析、ACK/FIN、查询回传、设备信息帧 | 加指令、改回传 |
 | `LayoutManager.h` | 配列表 + 逐键上传（`0xFE` 帧） | 换配列（用 `kle2c.py` 生成） |
 | `HID.cpp` / `HID.h` / `SubHID.cpp` / `SubHID.h` | 复合 HID 描述符与报文发送 | 改报文结构 |
@@ -111,25 +111,33 @@ volatile uint8_t buttonPins[] = {8,6,12,5,10,9, 1,MISO,SCK};   // 只用前 6 �
 
 ### 4.2 状态变量
 
+按键状态每键一个结构体，不再用位图（1.11 起重构）：
+
 ```c
-volatile uint16_t buttonbuf = 1;      // 物理状态位图（初值是 1，见 §9 的坑）
-static uint16_t key_trigger_state;    // 去抖后的状态位图（对外返回这个）
-static unsigned long time_Pre[6];     // 每个键最后一次“检测到按下”的时刻
+struct KeyRuntime {
+  uint8_t  raw;        // 本帧扫描到的原始电平（1 = 按下）
+  uint8_t  down;       // 去抖后的按下状态（映射 / 灯效都用它）
+  uint8_t  down_edge;  // 只在"刚按下"的那一帧为 1（粘滞开关 / 连发靠它触发）
+  uint32_t pressedAt;  // 最近一次按下的时刻（抬起去抖的计时起点）
+};
+static KeyRuntime keys[BUTTONCOUNT];
 ```
+
+对外只用 `keyDown(i)` / `keyRaw(i)` / `keyDownEdge(i)` 读，不要直接摸字段。
 
 ### 4.3 去抖算法
 
 ```c
-读全部引脚 → buttonbuf 位（HIGH=松开清零，LOW=按下置位并记录 time_Pre）
-for 每个键:
-    如果 buttonbuf 位为 1        → key_trigger_state 置位          （按下立即生效）
-    否则如果 now - time_Pre >= release_debounce
-                                 → key_trigger_state 清零          （抬起要等够去抖时间）
+每帧、每个键：
+    读引脚 → keys[i].raw；按下时同时记 keys[i].pressedAt = 本帧时刻
+    如果 raw == 1        → down = 1，且上一帧 down 为 0 时置 down_edge = 1   （按下立即生效）
+    否则如果 now - pressedAt >= release_debounce
+                         → down = 0、down_edge = 0                          （抬起要等够去抖时间）
 ```
 
 - 按下：**立即**触发，不延迟；抬起：必须连续 `release_debounce` 毫秒都检测到抬起才确认；
 - `release_debounce` 默认 1ms，范围 1~20，存在 EEPROM 第 0 字节；
-- 位图是**锁存**的（`key_trigger_state` 是静态变量），不是每轮重算——这点和磁轴版一样重要。
+- `down` 是**常驻结构体**里的状态（不是每轮重算），这点和磁轴版一样重要。
 
 ---
 
@@ -161,6 +169,32 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 `HIDConReport_t`（`SubHID.h`）是复合设备报文结构，`keyOperation()` 只往上“或”位，
 发送在 `SubHID.cpp`（Report ID 1/2/3 分别对应手柄/键盘/鼠标，多媒体另发一条）。
 
+### 5.4 特殊行为（device 字节高 4 位）
+
+普通映射的高 4 位恒为 0；高 4 位非 0 表示这条槽不是"输出一个键"，而是控制功能：
+
+| 高 4 位 | 低 4 位 | 含义 | 按下时做什么 |
+|---|---|---|---|
+| 0 | `1`~`4` | 普通映射 | 按 device/offset 填报文 |
+| 1 `STICKY` | `0x0E` | 粘滞切换开关 | 翻转该键的保持状态（上位机自动注入，每键一条、放 slot 0） |
+| 1 `STICKY` | `0x0F` | 粘滞功能总开关 | 开关整个粘滞功能 |
+| 2 `RAPID_TAB` | `0x0D` | 连发间隔减少 | `interval -= variation`（夹在 10~5000） |
+| 2 `RAPID_TAB` | `0x0E` | 连发间隔增加 | `interval += variation`（夹在 10~5000） |
+| 2 `RAPID_TAB` | `0x0F` | 连发功能总开关 | 开关整个连发功能 |
+| 3 `STICKY_RAPID_TAB` | `1`~`4` | 粘滞 + 连发 | 该键**上锁后**按连发间隔一直重复（低 4 位是正常 device/offset） |
+
+- 空槽判定是**整字节 == 0**：`0x2F` 的低半字节是 `0x0F`，只看低半字节会把它误判成空槽；
+- `0x0E` 在高 4 位 = 1 时是粘滞切换开关、= 2 时是连发间隔增加，**控制码要连 behavior 一起解读**；
+- **粘滞 + 连发（behavior 3）**：`stickyKeyInit()` 把它算作“有粘滞绑定”（`sk_trigger_state` 初始 0）；
+  键上必须同时有一条 `0x1E` 切换开关（上位机自动注入），否则永远上不了锁、不会输出任何东西；
+  上锁后由 `stickyKeyBehavior()` 每帧调用 `rapidTabBehavior()`，所以仍然受 `rk_args.toggle`（`0x2F`）门控，
+  间隔 / 脉宽 / 步长与普通连发共用；
+- 1.12 以前的固件不认识 behavior 3（`stickyKeyInit()` 不登记、`keyOperation()` 也没有分支），
+  这类映射会静默失效，所以上位机按版本闸门只对 1.12+ 提供；
+- 间隔增减只改**运行时**参数，不写 EEPROM（和连发开关一样，下次上电仍是 EEPROM 里的值）；
+- 老固件（1.11 及更早）不认识 `0x2D / 0x2E`，会落进 `rapidTabBehavior()` 当未知 device 静默跳过，
+  所以上位机只在固件 ≥ 1.12 时才提供这两个按钮。
+
 ---
 
 ## 6. EEPROM 布局（`EEPROMManager.h`）
@@ -170,7 +204,7 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 偏移 1        映射区：BUTTONCOUNT * KEYMAP_SIZE_PER_KEY = 6 * 24 = 144 字节
               每键 12 槽 × (device, offset) 2 字节，按键之间依次紧挨
 偏移 145      灯效参数区：LEDParams_t（10 字节，见 §8）
-偏移 155      连发参数区：RapidKeyArgs_t（7 字节：magic / 总开关 / 脉宽 / 间隔 / 预留）
+偏移 155      连发参数区：RapidKeyArgs_t（7 字节：magic / 总开关 / 脉宽 / 间隔 / 步长）
 合计          162 字节（ATmega32u4 有 1024 字节，剩余约 862）
 ```
 
@@ -193,7 +227,7 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 | `CMD_QUERY` | 0x04 | `[1]=0 映射 / 0x03 灯效 / 0xFE 布局 / 0xFF 设备信息` |
 | `CMD_ACK` / `CMD_FIN` | 0x05 / 0x06 | 回传 |
 | `CMD_REFRESH` | 0x07 | `[1]=0` 重新载入映射 |
-| `CMD_SET_RAPID` | 0x0C | 设置连发参数：`[1]=开关 [2]=脉宽 [3..4]=间隔 [5..6]=预留` |
+| `CMD_SET_RAPID` | 0x0C | 设置连发参数：`[1]=保留 [2]=脉宽 [3..4]=间隔 [5..6]=步长（variation）` |
 | `CMD_SAVE_RAPID` | 0x0D | 保存连发参数：`[1]=0x6C` 确认（保存前固件会把开关强制置 1） |
 | `CMD_SET_LED` | 0x08 | 即时灯效：`[1]=effect [2]=亮度 [3]=速度 [4..6]=主色 RGB` |
 | `CMD_SET_LED_ACCENT` | 0x09 | 即时副色：`[1..3]=副色 RGB` |
@@ -242,8 +276,8 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 wsInit();                    // FastLED.addLeds + 清屏 + 关闭 dither
 ledParamsGetFromEEPROM();    // 读灯效参数；无效就用默认值并写入 EEPROM
 
-// loop()，放在 keyOperation(getKeyState()) 之后
-wsTick(buttonbuf);           // 内部按 ledParams.fps 限速，每帧只 show 一次
+// loop()，放在 keyOperation() 之后
+wsTick();                    // 内部按 ledParams.fps 限速，每帧只 show 一次
 ```
 
 ### 8.2 参数结构体 `LEDParams_t`（10 字节，EEPROM 里就是这 10 个字节）
@@ -400,11 +434,9 @@ python tools/led_sim.py --list          # 列出效果编号
 
 ## 9. 已知的坑与注意点
 
-1. **`buttonbuf` 初值是 1**
-   ```c
-   volatile uint16_t buttonbuf = 1;   // bit0 = 1
-   ```
-   上电第一次扫描之前，按键 0 看起来是“按下的”，会亮一下灯、也可能触发一次映射。
+1. **连发间隔是 `uint16`，加减必须夹紧**
+   `rk_args.interval -= variation` 在 `interval < variation` 时会下溢成 65526，连发直接停住；
+   `rapidTabInterval_Increase/Decrease()` 里按 `RAPID_INTERVAL_MIN/MAX` 夹，别直接 `+=` / `-=`。
 
 2. **`buttonPins[]` 有 9 项，只用前 6 项**
    后面三项是 `1, MISO, SCK`；其中 D1 是串口 TX，别在 `BUTTONCOUNT > 6` 时直接用。
@@ -445,11 +477,11 @@ python tools/led_sim.py --list          # 列出效果编号
 
 ```
 setup: 灯带(wsInit→ledParamsGetFromEEPROM) → 引脚(上拉) → debounceGetFromEEPROM → keyCodeInit
-loop : 清报文+lyAxis → getKeyState(扫描去抖) → keyOperation → wsTick(灯效) → 指令 → 发送 → 500us
+loop : 清报文+lyAxis → updateKeyState(扫描去抖→keys[]) → keyOperation → wsTick(灯效) → 指令 → 发送 → 500us
 
-按键: digitalRead(上拉) → buttonbuf（物理）→ key_trigger_state（去抖锁存）
+按键: digitalRead(上拉) → keys[i].raw（物理）→ keys[i].down（去抖）→ down_edge（按下沿）
       → keyOperation() 查 key_map → report → HIDStateUpdate(2) 每两轮发一次
 
-EEPROM: [0] 去抖时间（1~20）  [1..144] 映射  [145..154] 灯效参数（LEDParams_t）
+EEPROM: [0] 去抖时间（1~20）  [1..144] 映射  [145..154] 灯效参数（LEDParams_t）  [155..161] 连发参数（RapidKeyArgs_t）
 指令  : Report ID 4，8 字节；ACK=0x05、FIN=0x06、查询结果 0x01/0x0C/0x0D/0xFE、设备信息 0xFF
 ```

@@ -55,6 +55,14 @@ void keyOperation(){
                 if(keyDownEdge(i)){
                   rapidTabBehavior_toggle();
                 }
+              }else if(device == RAPID_TAB_INC){
+                if(keyDownEdge(i)){
+                  rapidTabInterval_Increase();
+                }
+              }else if(device == RAPID_TAB_DEC){
+                if(keyDownEdge(i)){
+                  rapidTabInterval_Decrease();
+                }
               }else{
                 rapidTabBehavior(i, device, offset);
               }

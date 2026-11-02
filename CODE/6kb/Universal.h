@@ -3,7 +3,7 @@
 //在这里开启或关闭串口DEBUG
 #define DEBUG 0
 #define HOST_VERSION_REQUIRED 0x47   // 设备信息 [6]：这套固件要求的上位机版本（2|3|3 位）
-#define FIRMWARE_VERSION 0x49   // 1.11（2|3|3：01 001 001 = 0x49）新增连发参数查询/写入
+#define FIRMWARE_VERSION 0x4A   // 1.12（2|3|3：01 001 010 = 0x4A）连发间隔 +/- 调整映射（0x2E/0x2D）
 
 /*-----------------------------------------------------------------------------
   统一时间基准
@@ -74,11 +74,17 @@ static inline uint32_t getFrameTime() {
 #define CONTROLLER_LEFT_TRIGGER 0x0B
 #define CONTROLLER_RIGHT_TRIGGER 0x0C
 
+//低 4 位控制码：只在 behavior != 0 时有意义，按 behavior 分区解读
+//  粘滞键（behavior=1）：0x0E 切换开关 / 0x0F 功能总开关
+//  连发  （behavior=2）：0x0D 间隔减少 / 0x0E 间隔增加 / 0x0F 功能总开关
 #define TOGGLE 0x0F
 #define STICKY_KEY_SWITCH 0x0E
+#define RAPID_TAB_INC 0x0E
+#define RAPID_TAB_DEC 0x0D
 
 #define STICKY 0x01
 #define RAPID_TAB 0x02
+#define STICKY_RAPID_TAB 0x03
 /*——————————全局变量声名——————————*/
 volatile HIDConReport_t report;
 volatile uint8_t buttonPins[] = {8,6,12,5,10,9,1,MISO,SCK};
