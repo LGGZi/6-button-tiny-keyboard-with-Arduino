@@ -1,4 +1,4 @@
-﻿#ifndef KeyBehaviorEEPROM_h
+#ifndef KeyBehaviorEEPROM_h
 #define KeyBehaviorEEPROM_h
 #include "Universal.h"
 #include "EEPROMManager.h"   // 用到 EEPROM / LED_PARAMS_START_POSITION / LEDParams_t
@@ -11,7 +11,7 @@
 
   布局（紧跟在灯效参数区之后）：
 
-      偏移 LED_PARAMS_START_POSITION + sizeof(LEDParams_t) = 155
+      偏移 LED_PARAMS_START_POSITION + sizeof(LEDParams_t) = 156
       整块就是一个 RapidKeyArgs_t（AVR 上 1 字节对齐，7 字节）：
         magic / toggle / pulse / interval / variation
 
@@ -26,6 +26,13 @@
 //EEPROM 总占用自检：改按键数 / 映射数 / 参数区大小时如果超了，这里直接编译报错
 static_assert(RAPID_PARAMS_START_POSITION + sizeof(struct RapidKeyArgs_t) <= E2END + 1,
               "EEPROM 不够用了：检查 BUTTONCOUNT / MAX_BINDINGS_PER_KEY / 各参数区大小");
+//布局自检：各区块必须首尾相接、互不重叠（去抖 1 字节 → 映射区 → 灯效参数区 → 连发参数区）
+static_assert(DEBOUNCE_EEPROM_POS + 1 <= KEYMAP_START_POSITION,
+              "去抖字节和映射区重叠");
+static_assert(KEYMAP_START_POSITION + BUTTONCOUNT * KEYMAP_SIZE_PER_KEY <= LED_PARAMS_START_POSITION,
+              "映射区和灯效参数区重叠");
+static_assert(LED_PARAMS_START_POSITION + sizeof(LEDParams_t) <= RAPID_PARAMS_START_POSITION,
+              "灯效参数区和连发参数区重叠");
 //结构体布局就是 EEPROM 里实际存的字节：AVR 上按 1 字节对齐，这里是 7 字节（无填充）
 //改字段记得同步：上位机读取偏移 + README 的布局表
 static_assert(sizeof(struct RapidKeyArgs_t) == 7,

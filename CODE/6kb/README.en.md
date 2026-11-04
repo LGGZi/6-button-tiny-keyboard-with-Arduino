@@ -218,9 +218,9 @@ controls a feature instead of emitting a key:
 offset 0      debounce time (1 byte, 1..20, default 1)
 offset 1      mapping area: BUTTONCOUNT * KEYMAP_SIZE_PER_KEY = 6 * 24 = 144 bytes
               12 slots per key × (device, offset) 2 bytes
-offset 145    LED parameters: LEDParams_t (10 bytes, see §8)
-offset 155    repeat parameters: RapidKeyArgs_t (7 bytes: magic / toggle / pulse / interval / step)
-total         162 bytes (ATmega32u4 has 1024, ~862 free)
+offset 145    LED parameters: LEDParams_t (11 bytes, see §8)
+offset 156    repeat parameters: RapidKeyArgs_t (7 bytes: magic / toggle / pulse / interval / step)
+total         163 bytes (ATmega32u4 has 1024, ~861 free)
 ```
 
 - `#define KEYMAP_START_POSITION 1`; the LED area offset is computed, never hard-coded:
@@ -296,7 +296,7 @@ ledParamsGetFromEEPROM();    // load parameters (writes defaults when invalid)
 wsTick();                    // paced by ledParams.fps, one show() per frame
 ```
 
-### 8.2 `LEDParams_t` (10 bytes, exactly what sits in EEPROM)
+### 8.2 `LEDParams_t` (11 bytes, exactly what sits in EEPROM)
 
 | Field | Type | Meaning |
 |---|---|---|

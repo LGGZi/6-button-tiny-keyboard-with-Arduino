@@ -203,9 +203,9 @@ uint8_t key_map[BUTTONCOUNT][MAXIMUM_BINDABLE_KEY][2];   // [按键][槽][device
 偏移 0        去抖时间（1 字节，1~20，默认 1）
 偏移 1        映射区：BUTTONCOUNT * KEYMAP_SIZE_PER_KEY = 6 * 24 = 144 字节
               每键 12 槽 × (device, offset) 2 字节，按键之间依次紧挨
-偏移 145      灯效参数区：LEDParams_t（10 字节，见 §8）
-偏移 155      连发参数区：RapidKeyArgs_t（7 字节：magic / 总开关 / 脉宽 / 间隔 / 步长）
-合计          162 字节（ATmega32u4 有 1024 字节，剩余约 862）
+偏移 145      灯效参数区：LEDParams_t（11 字节，见 §8）
+偏移 156      连发参数区：RapidKeyArgs_t（7 字节：magic / 总开关 / 脉宽 / 间隔 / 步长）
+合计          163 字节（ATmega32u4 有 1024 字节，剩余约 861）
 ```
 
 - `#define KEYMAP_START_POSITION 1`；灯效区偏移由宏计算，不要写死：
@@ -280,7 +280,7 @@ ledParamsGetFromEEPROM();    // 读灯效参数；无效就用默认值并写入
 wsTick();                    // 内部按 ledParams.fps 限速，每帧只 show 一次
 ```
 
-### 8.2 参数结构体 `LEDParams_t`（10 字节，EEPROM 里就是这 10 个字节）
+### 8.2 参数结构体 `LEDParams_t`（11 字节，EEPROM 里就是这 11 个字节）
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
