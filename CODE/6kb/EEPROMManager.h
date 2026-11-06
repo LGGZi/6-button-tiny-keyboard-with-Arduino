@@ -134,7 +134,7 @@ void keyMapAppend(uint8_t key, uint8_t device, uint8_t offset){
 }
 
 void keyCodeGetFromEEPROM(uint8_t key){
-  //一个按键一个按键地读：读到空槽（device 不是 1~4）说明本按键的映射到此为止，
+  //一个按键一个按键地读：读到空槽说明本按键的映射到此为止，
   //或者已经读满 MAX_BINDINGS_PER_KEY 个也停
   for(uint8_t slot = 0; slot < MAX_BINDINGS_PER_KEY; slot++){
     int index = keyMapSlotToEEPROMIndex(key, slot);

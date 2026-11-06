@@ -1,4 +1,4 @@
-﻿#ifndef HIDcmdHandler_h
+#ifndef HIDcmdHandler_h
 #define HIDcmdHandler_h
 
 #include <stdint.h>
@@ -28,18 +28,23 @@
 
 // Byte 2, Device, when mapping keys
 #define NO_DEVICE 0x00
-#define MAP_TYPE_KEYBOARD   0x01
-#define MAP_TYPE_MOUSE      0x02
-#define MAP_TYPE_GAMEPAD    0x03
-#define MAP_TYPE_CONSUMER   0x04
-#define MAP_TYPE_CONTROLLER_XAXIS_LEFT 0x05
-#define MAP_TYPE_CONTROLLER_YAXIS_LEFT 0x06
-#define MAP_TYPE_CONTROLLER_XAXIS_RIGHT 0x07
-#define MAP_TYPE_CONTROLLER_YAXIS_RIGHT 0x08
-#define MAP_TYPE_MOUSE_X 0x09
-#define MAP_TYPE_MOUSE_Y 0x0A
-#define MAP_TYPE_CONTROLLER_LEFT_TRIGGER 0x0B
-#define MAP_TYPE_CONTROLLER_RIGHT_TRIGGER 0x0C
+// 设备编号的“唯一来源”是 Universal.h（KEYBOARD / CONTROLLER / MOUSE / MULTIMEDIA …）。
+// MAP_TYPE_* 只是给上位机指令用的可读别名，值必须跟 Universal.h 一致。
+// 早期版本把 MOUSE / GAMEPAD 写成了 0x02 / 0x03（正好和 CONTROLLER=2、MOUSE=3 相反），
+// 这两条宏当时没被任何代码使用、不影响功能，但换人接手容易埋坑；现在改成直接引用常量，
+// 以后改 Universal.h 的编号这里会自动跟着变，不会再漂移。
+#define MAP_TYPE_KEYBOARD   KEYBOARD        // 1
+#define MAP_TYPE_GAMEPAD    CONTROLLER      // 2
+#define MAP_TYPE_MOUSE      MOUSE           // 3
+#define MAP_TYPE_CONSUMER   MULTIMEDIA      // 4
+#define MAP_TYPE_CONTROLLER_XAXIS_LEFT   CONTROLLER_XAXIS_LEFT
+#define MAP_TYPE_CONTROLLER_YAXIS_LEFT   CONTROLLER_YAXIS_LEFT
+#define MAP_TYPE_CONTROLLER_XAXIS_RIGHT  CONTROLLER_XAXIS_RIGHT
+#define MAP_TYPE_CONTROLLER_YAXIS_RIGHT  CONTROLLER_YAXIS_RIGHT
+#define MAP_TYPE_MOUSE_X    MOUSE_X
+#define MAP_TYPE_MOUSE_Y    MOUSE_Y
+#define MAP_TYPE_CONTROLLER_LEFT_TRIGGER  CONTROLLER_LEFT_TRIGGER
+#define MAP_TYPE_CONTROLLER_RIGHT_TRIGGER CONTROLLER_RIGHT_TRIGGER
 // Byte 2, When calibrating：CQ_ALL / CQ_SINGLE
 #define CQ_ALL     0x00
 #define CQ_SINGLE  0x01
